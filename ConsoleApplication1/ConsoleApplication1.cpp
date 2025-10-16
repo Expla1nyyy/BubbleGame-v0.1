@@ -21,10 +21,18 @@ private:
     const int screenWidth = 800;
     const int screenHeight = 600;
     const float ballRadius = 12.0f;
-    const float shootSpeed = 20.0f; // Увеличил скорость в 2 раза
-    const float gravity = 0.05f;    // Уменьшил гравитацию для большего полета
+    const float shootSpeed = 20.0f;
+    const float gravity = 0.05f;
     const float friction = 0.97f;
     const float minVelocity = 0.2f;
+
+    // Game area boundaries
+    const float gameAreaLeft = 10.0f;
+    const float gameAreaTop = 50.0f;
+    const float gameAreaRight = 790.0f;
+    const float gameAreaBottom = 550.0f;
+    const float gameAreaWidth = 780.0f;
+    const float gameAreaHeight = 500.0f;
 
     std::vector<Ball> balls;
     Ball* currentBall;
@@ -34,12 +42,12 @@ private:
     bool gameOver;
 
     std::vector<Color> ballColors = {
-        RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, SKYBLUE
+        RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, SKYBLUE, LIME, VIOLET
     };
 
 public:
     BallGame() : isAiming(false), score(0), gameOver(false), currentBall(nullptr) {
-        InitWindow(screenWidth, screenHeight, "Шарики за ролики - МЕГА СИЛА!");
+        InitWindow(screenWidth, screenHeight, "BubbleBlast");
         SetTargetFPS(60);
 
         createInitialBalls();
@@ -52,27 +60,121 @@ public:
     }
 
     void createInitialBalls() {
+        // Calculate how many balls fit horizontally in the game area
+        int ballsPerRow = (int)((gameAreaWidth - 20) / (ballRadius * 2 + 2));
+        int rows = 7;
+
+        // Create a 2D grid to track ball colors for collision detection
+        std::vector<std::vector<Color>> colorGrid(rows, std::vector<Color>(ballsPerRow, BLACK));
+
+        // Fill the grid with safe colors
+        for (int row = 0; row < rows; row++) {
+            for (int col = 0; col < ballsPerRow; col++) {
+                colorGrid[row][col] = getColorForPosition(colorGrid, row, col);
+            }
+        }
+
+        // Create balls using the safe color grid
+        for (int row = 0; row < rows; row++) {
+            for (int col = 0; col < ballsPerRow; col++) {
+                float x = gameAreaLeft + 10 + col * (ballRadius * 2 + 2);
+                float y = gameAreaTop + 10 + row * (ballRadius * 2 + 2);
+
+                if (x + ballRadius < gameAreaRight && y + ballRadius < gameAreaBottom) {
+                    balls.emplace_back(x, y, ballRadius, colorGrid[row][col]);
+                }
+            }
+        }
+    }
+
+    Color getColorForPosition(std::vector<std::vector<Color>>& grid, int row, int col) {
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<> colorDist(0, ballColors.size() - 1);
 
-        // Создаем большой массив 7x20 шаров в ВЕРХНЕЙ части экрана
-        for (int row = 0; row < 7; row++) {
-            for (int col = 0; col < 20; col++) {
-                float x = 20 + col * (ballRadius * 2 + 2);
-                float y = 50 + row * (ballRadius * 2 + 2); // Еще выше
-                if (x + ballRadius < screenWidth && y + ballRadius < screenHeight - 100) {
-                    balls.emplace_back(x, y, ballRadius, ballColors[colorDist(gen)]);
+        // Try multiple times to find a safe color
+        for (int attempt = 0; attempt < 50; attempt++) {
+            Color candidate = ballColors[colorDist(gen)];
+
+            if (isColorSafe(grid, row, col, candidate)) {
+                return candidate;
+            }
+        }
+
+        // If no safe color found after many attempts, use fallback
+        return getFallbackColor(grid, row, col);
+    }
+
+    bool isColorSafe(std::vector<std::vector<Color>>& grid, int row, int col, Color color) {
+        // Check horizontal: don't create 3 in a row
+        if (col >= 2) {
+            Color left1 = grid[row][col - 1];
+            Color left2 = grid[row][col - 2];
+            if (colorsEqual(color, left1) && colorsEqual(color, left2)) {
+                return false;
+            }
+        }
+
+        // Check vertical: don't create 3 in a column
+        if (row >= 2) {
+            Color above1 = grid[row - 1][col];
+            Color above2 = grid[row - 2][col];
+            if (colorsEqual(color, above1) && colorsEqual(color, above2)) {
+                return false;
+            }
+        }
+
+        // Check immediate neighbors to prevent potential future triples
+        if (col >= 1) {
+            Color left = grid[row][col - 1];
+            if (colorsEqual(color, left)) {
+                // Check if this would set up a potential triple with the next ball
+                if (col >= 2 && colorsEqual(left, grid[row][col - 2])) {
+                    return false; // Would complete a triple
                 }
             }
         }
 
-        // Добавляем еще случайных шаров для заполнения пробелов
-        for (int i = 0; i < 30; i++) {
-            float x = 30 + (rand() % (screenWidth - 60));
-            float y = 50 + (rand() % 150); // Выше
-            balls.emplace_back(x, y, ballRadius, ballColors[colorDist(gen)]);
+        if (row >= 1) {
+            Color above = grid[row - 1][col];
+            if (colorsEqual(color, above)) {
+                // Check if this would set up a potential triple with the next ball
+                if (row >= 2 && colorsEqual(above, grid[row - 2][col])) {
+                    return false; // Would complete a triple
+                }
+            }
         }
+
+        return true;
+    }
+
+    Color getFallbackColor(std::vector<std::vector<Color>>& grid, int row, int col) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+
+        // Try to find any color that's different from immediate neighbors
+        for (int i = 0; i < ballColors.size(); i++) {
+            Color candidate = ballColors[i];
+            bool safeFromImmediate = true;
+
+            // Check left neighbor
+            if (col >= 1 && colorsEqual(candidate, grid[row][col - 1])) {
+                safeFromImmediate = false;
+            }
+
+            // Check above neighbor  
+            if (row >= 1 && colorsEqual(candidate, grid[row - 1][col])) {
+                safeFromImmediate = false;
+            }
+
+            if (safeFromImmediate) {
+                return candidate;
+            }
+        }
+
+        // Last resort: completely random
+        std::uniform_int_distribution<> colorDist(0, ballColors.size() - 1);
+        return ballColors[colorDist(gen)];
     }
 
     void createNewBall() {
@@ -83,8 +185,7 @@ public:
         if (currentBall) {
             delete currentBall;
         }
-        // Запускаем шар СИЛЬНО ВЫШЕ - почти из центра экрана
-        currentBall = new Ball(screenWidth / 2, screenHeight - 250, ballRadius,
+        currentBall = new Ball(screenWidth / 2, gameAreaBottom - 50, ballRadius,
             ballColors[colorDist(gen)]);
         currentBall->isStuck = false;
         isAiming = true;
@@ -116,28 +217,16 @@ public:
             aimDirection.y /= length;
         }
 
-        // Увеличиваем максимальную силу выстрела
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
             shootBall();
-        }
-
-        // Добавляем возможность усиленного выстрела при зажатии
-        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-            // Чем дольше зажата кнопка, тем сильнее выстрел (до определенного предела)
-            static float chargeTime = 0.0f;
-            chargeTime += GetFrameTime();
-            if (chargeTime > 1.5f) chargeTime = 1.5f;
         }
     }
 
     void shootBall() {
-        // Базовая сила + дополнительная мощность
         float powerMultiplier = 1.0f;
-
-        // Проверяем расстояние для определения силы
         float mouseDistance = sqrt(aimDirection.x * aimDirection.x + aimDirection.y * aimDirection.y);
         if (mouseDistance > 100.0f) {
-            powerMultiplier = 1.5f; // Дополнительная сила при дальнем прицеливании
+            powerMultiplier = 1.5f;
         }
 
         currentBall->velocity = {
@@ -149,7 +238,7 @@ public:
     }
 
     void updatePhysics() {
-        // Обновляем физику для текущего шара
+        // Update physics for current ball
         if (currentBall && !currentBall->isStuck) {
             currentBall->velocity.y += gravity;
             currentBall->velocity.x *= friction;
@@ -158,23 +247,31 @@ public:
             currentBall->position.x += currentBall->velocity.x;
             currentBall->position.y += currentBall->velocity.y;
 
-            // Столкновение со стенами
-            if (currentBall->position.x - currentBall->radius < 0) {
-                currentBall->position.x = currentBall->radius;
-                currentBall->velocity.x *= -0.7f; // Меньше трения при отскоке
+            // Collision with game area boundaries
+            if (currentBall->position.x - currentBall->radius < gameAreaLeft) {
+                currentBall->position.x = gameAreaLeft + currentBall->radius;
+                currentBall->velocity.x *= -0.7f;
             }
-            else if (currentBall->position.x + currentBall->radius > screenWidth) {
-                currentBall->position.x = screenWidth - currentBall->radius;
+            else if (currentBall->position.x + currentBall->radius > gameAreaRight) {
+                currentBall->position.x = gameAreaRight - currentBall->radius;
                 currentBall->velocity.x *= -0.7f;
             }
 
-            if (currentBall->position.y - currentBall->radius < 30) { // Выше верхняя граница
-                currentBall->position.y = 30 + currentBall->radius;
+            if (currentBall->position.y - currentBall->radius < gameAreaTop) {
+                currentBall->position.y = gameAreaTop + currentBall->radius;
                 currentBall->velocity.y *= -0.7f;
+            }
+            else if (currentBall->position.y + currentBall->radius > gameAreaBottom) {
+                currentBall->position.y = gameAreaBottom - currentBall->radius;
+                currentBall->velocity.y *= -0.9f;
+
+                if (fabs(currentBall->velocity.y) < 2.0f) {
+                    currentBall->velocity.y = -3.0f;
+                }
             }
         }
 
-        // Обновляем незафиксированные шары в массиве
+        // Update unfixed balls in array
         for (auto& ball : balls) {
             if (!ball.isStuck && ball.active) {
                 ball.velocity.y += gravity;
@@ -184,19 +281,27 @@ public:
                 ball.position.x += ball.velocity.x;
                 ball.position.y += ball.velocity.y;
 
-                // Столкновение со стенами
-                if (ball.position.x - ball.radius < 0) {
-                    ball.position.x = ball.radius;
+                // Collision with game area boundaries
+                if (ball.position.x - ball.radius < gameAreaLeft) {
+                    ball.position.x = gameAreaLeft + ball.radius;
                     ball.velocity.x *= -0.7f;
                 }
-                else if (ball.position.x + ball.radius > screenWidth) {
-                    ball.position.x = screenWidth - ball.radius;
+                else if (ball.position.x + ball.radius > gameAreaRight) {
+                    ball.position.x = gameAreaRight - ball.radius;
                     ball.velocity.x *= -0.7f;
                 }
 
-                if (ball.position.y - ball.radius < 30) {
-                    ball.position.y = 30 + ball.radius;
+                if (ball.position.y - ball.radius < gameAreaTop) {
+                    ball.position.y = gameAreaTop + ball.radius;
                     ball.velocity.y *= -0.7f;
+                }
+                else if (ball.position.y + ball.radius > gameAreaBottom) {
+                    ball.position.y = gameAreaBottom - ball.radius;
+                    ball.velocity.y *= -0.9f;
+
+                    if (fabs(ball.velocity.y) < 2.0f) {
+                        ball.velocity.y = -3.0f;
+                    }
                 }
             }
         }
@@ -208,7 +313,6 @@ public:
         bool hasCollision = false;
         Ball* collidedBall = nullptr;
 
-        // Проверяем столкновение с зафиксированными шарами
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck) continue;
 
@@ -220,27 +324,37 @@ public:
                 hasCollision = true;
                 collidedBall = &ball;
 
-                // Корректируем позицию
                 float overlap = (currentBall->radius + ball.radius) - distance;
                 if (distance > 0) {
                     currentBall->position.x += (dx / distance) * overlap * 0.5f;
                     currentBall->position.y += (dy / distance) * overlap * 0.5f;
+
+                    if (currentBall->position.x - currentBall->radius < gameAreaLeft) {
+                        currentBall->position.x = gameAreaLeft + currentBall->radius;
+                    }
+                    else if (currentBall->position.x + currentBall->radius > gameAreaRight) {
+                        currentBall->position.x = gameAreaRight - currentBall->radius;
+                    }
+                    if (currentBall->position.y - currentBall->radius < gameAreaTop) {
+                        currentBall->position.y = gameAreaTop + currentBall->radius;
+                    }
+                    else if (currentBall->position.y + currentBall->radius > gameAreaBottom) {
+                        currentBall->position.y = gameAreaBottom - currentBall->radius;
+                    }
                 }
                 break;
             }
         }
 
-        // Более либеральные условия для фиксации - шар должен быть почти остановлен
         bool shouldStick = hasCollision ||
             (fabs(currentBall->velocity.x) < minVelocity &&
                 fabs(currentBall->velocity.y) < minVelocity &&
-                currentBall->position.y < screenHeight - 150);
+                currentBall->position.y < gameAreaBottom - 50);
 
         if (shouldStick) {
             currentBall->isStuck = true;
             currentBall->velocity = { 0, 0 };
 
-            // Находим ближайшую позицию для прилипания
             if (hasCollision && collidedBall) {
                 float dx = currentBall->position.x - collidedBall->position.x;
                 float dy = currentBall->position.y - collidedBall->position.y;
@@ -250,19 +364,28 @@ public:
                     float targetDistance = currentBall->radius + collidedBall->radius;
                     currentBall->position.x = collidedBall->position.x + (dx / distance) * targetDistance;
                     currentBall->position.y = collidedBall->position.y + (dy / distance) * targetDistance;
+
+                    if (currentBall->position.x - currentBall->radius < gameAreaLeft) {
+                        currentBall->position.x = gameAreaLeft + currentBall->radius;
+                    }
+                    else if (currentBall->position.x + currentBall->radius > gameAreaRight) {
+                        currentBall->position.x = gameAreaRight - currentBall->radius;
+                    }
+                    if (currentBall->position.y - currentBall->radius < gameAreaTop) {
+                        currentBall->position.y = gameAreaTop + currentBall->radius;
+                    }
+                    else if (currentBall->position.y + currentBall->radius > gameAreaBottom) {
+                        currentBall->position.y = gameAreaBottom - currentBall->radius;
+                    }
                 }
             }
 
             balls.push_back(*currentBall);
-
-            // Проверяем группы
             checkBallGroups();
-
             createNewBall();
         }
 
-        // Если шар улетел за нижнюю границу, создаем новый (реже происходит)
-        if (currentBall && currentBall->position.y > screenHeight - 20) {
+        if (currentBall && currentBall->position.y > gameAreaBottom + 50) {
             createNewBall();
         }
     }
@@ -281,26 +404,18 @@ public:
 
             if (group.size() >= 3) {
                 toRemove.insert(toRemove.end(), group.begin(), group.end());
-                score += group.size() * 15; // Больше очков
+                score += group.size() * 15;
 
-                if (group.size() >= 5) {
-                    score += group.size() * 10;
-                }
-                if (group.size() >= 7) {
-                    score += group.size() * 20;
-                }
-                if (group.size() >= 10) {
-                    score += group.size() * 30; // Мега бонус за огромные группы
-                }
+                if (group.size() >= 5) score += group.size() * 10;
+                if (group.size() >= 7) score += group.size() * 20;
+                if (group.size() >= 10) score += group.size() * 30;
             }
         }
 
-        // Удаляем шары из групп
         for (int index : toRemove) {
             balls[index].active = false;
         }
 
-        // Очищаем неактивные шары
         if (!toRemove.empty()) {
             balls.erase(std::remove_if(balls.begin(), balls.end(),
                 [](const Ball& ball) { return !ball.active; }),
@@ -334,20 +449,18 @@ public:
     }
 
     void checkGameOver() {
-        // Game over только при ОЧЕНЬ большом количестве шаров
         if (balls.size() > 250) {
             gameOver = true;
         }
 
-        // Дополнительно: если шары опустились слишком низко
-        float lowestBall = 0;
+        float highestY = gameAreaTop;
         for (const auto& ball : balls) {
-            if (ball.isStuck && ball.active && ball.position.y > lowestBall) {
-                lowestBall = ball.position.y;
+            if (ball.isStuck && ball.active && ball.position.y > highestY) {
+                highestY = ball.position.y;
             }
         }
 
-        if (lowestBall > screenHeight - 50) {
+        if (highestY > gameAreaBottom - 30) {
             gameOver = true;
         }
     }
@@ -356,14 +469,12 @@ public:
         BeginDrawing();
         ClearBackground(BLACK);
 
-        // Рисуем фон
         DrawRectangle(0, screenHeight - 50, screenWidth, 50, DARKGRAY);
         DrawRectangle(0, 0, screenWidth, 50, DARKGRAY);
 
-        // Рисуем границы игровой зоны
-        DrawRectangleLines(10, 50, screenWidth - 20, screenHeight - 100, GRAY);
+        DrawRectangle(gameAreaLeft, gameAreaTop, gameAreaWidth, gameAreaHeight, Fade(DARKBLUE, 0.1f));
+        DrawRectangleLines(gameAreaLeft, gameAreaTop, gameAreaWidth, gameAreaHeight, BLUE);
 
-        // Рисуем все шары
         for (const auto& ball : balls) {
             if (ball.active) {
                 DrawCircleV(ball.position, ball.radius, ball.color);
@@ -372,7 +483,6 @@ public:
             }
         }
 
-        // Рисуем текущий шар и прицел
         if (currentBall) {
             DrawCircleV(currentBall->position, currentBall->radius, currentBall->color);
             DrawCircleLines(currentBall->position.x, currentBall->position.y,
@@ -380,41 +490,37 @@ public:
 
             if (isAiming) {
                 Vector2 endPoint = {
-                    currentBall->position.x + aimDirection.x * 150, // Удлиненный прицел
+                    currentBall->position.x + aimDirection.x * 150,
                     currentBall->position.y + aimDirection.y * 150
                 };
                 DrawLineV(currentBall->position, endPoint, YELLOW);
                 DrawCircleV(endPoint, 5, RED);
 
-                // Показываем силу выстрела
                 float power = sqrt(aimDirection.x * aimDirection.x + aimDirection.y * aimDirection.y) * 80;
                 DrawRectangle(screenWidth - 150, screenHeight - 45, (int)power, 10,
                     power > 60 ? RED : (power > 40 ? ORANGE : GREEN));
             }
         }
 
-        // Рисуем UI
-        DrawText(TextFormat("Счет: %d", score), 20, 15, 20, WHITE);
-        DrawText(TextFormat("Шаров: %zu", balls.size()), screenWidth - 150, 15, 20, WHITE);
-        DrawText("МЕГА СИЛА! Стреляйте сильно!", screenWidth / 2 - 140, 15, 20, YELLOW);
+        DrawText(TextFormat("Score: %d", score), 20, 15, 20, WHITE);
+        DrawText(TextFormat("Balls: %zu", balls.size()), screenWidth - 150, 15, 20, WHITE);
+        DrawText("BubbleBlast", screenWidth / 2 - 60, 15, 20, BLUE);
 
-        // Подсказки по управлению
-        DrawText("ЛКМ - выстрел, R - перезапуск", 20, screenHeight - 30, 15, LIGHTGRAY);
-        DrawText("Сила выстрела:", screenWidth - 180, screenHeight - 45, 15, GREEN);
+        DrawText("LMB - shoot, R - restart", 20, screenHeight - 30, 15, LIGHTGRAY);
+        DrawText("Power:", screenWidth - 180, screenHeight - 45, 15, GREEN);
 
-        // Отображаем мощность
         if (isAiming) {
             float power = sqrt(aimDirection.x * aimDirection.x + aimDirection.y * aimDirection.y) * 100;
-            DrawText(TextFormat("Мощность: %.0f%%", power), screenWidth / 2 - 60, screenHeight - 100, 18,
+            DrawText(TextFormat("Power: %.0f%%", power), screenWidth / 2 - 50, screenHeight - 100, 18,
                 power > 80 ? RED : (power > 50 ? YELLOW : GREEN));
         }
 
         if (gameOver) {
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.8f));
-            DrawText("ИГРА ОКОНЧЕНА!", screenWidth / 2 - 120, screenHeight / 2 - 60, 40, RED);
-            DrawText(TextFormat("Финальный счет: %d", score), screenWidth / 2 - 100, screenHeight / 2 - 10, 30, WHITE);
-            DrawText(TextFormat("Уничтожено групп: %d", score / 15), screenWidth / 2 - 120, screenHeight / 2 + 30, 25, YELLOW);
-            DrawText("Нажмите R для новой игры", screenWidth / 2 - 140, screenHeight / 2 + 80, 25, GREEN);
+            DrawText("GAME OVER!", screenWidth / 2 - 100, screenHeight / 2 - 60, 40, RED);
+            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 90, screenHeight / 2 - 10, 30, WHITE);
+            DrawText(TextFormat("Groups Destroyed: %d", score / 15), screenWidth / 2 - 110, screenHeight / 2 + 30, 25, YELLOW);
+            DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 80, 25, GREEN);
         }
 
         EndDrawing();
@@ -422,7 +528,7 @@ public:
 
     void run() {
         while (!WindowShouldClose()) {
-            if (gameOver && IsKeyPressed(KEY_R)) {
+            if (IsKeyPressed(KEY_R)) {
                 restart();
             }
 
