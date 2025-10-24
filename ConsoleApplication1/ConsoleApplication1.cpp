@@ -18,21 +18,19 @@ struct Ball {
 
 class BallGame {
 private:
-    const int screenWidth = 800;
-    const int screenHeight = 600;
-    const float ballRadius = 12.0f;
-    const float shootSpeed = 20.0f;
-    const float gravity = 0.05f;
-    const float friction = 0.97f;
-    const float minVelocity = 0.2f;
+    const int screenWidth = 450;
+    const int screenHeight = 800;
+    const float ballRadius = 15.0f; // УВЕЛИЧЕННЫЙ РАЗМЕР ШАРА
+    const float shootSpeed = 17.0f; // УМЕНЬШЕННАЯ СКОРОСТЬ
+    const float minVelocity = 0.3f;
 
     // Game area boundaries
     const float gameAreaLeft = 10.0f;
-    const float gameAreaTop = 50.0f;
-    const float gameAreaRight = 790.0f;
-    const float gameAreaBottom = 550.0f;
-    const float gameAreaWidth = 780.0f;
-    const float gameAreaHeight = 500.0f;
+    const float gameAreaTop = 60.0f;
+    const float gameAreaRight = 440.0f;
+    const float gameAreaBottom = 750.0f;
+    const float gameAreaWidth = 430.0f;
+    const float gameAreaHeight = 690.0f;
 
     std::vector<Ball> balls;
     Ball* currentBall;
@@ -47,7 +45,7 @@ private:
 
 public:
     BallGame() : isAiming(false), score(0), gameOver(false), currentBall(nullptr) {
-        InitWindow(screenWidth, screenHeight, "BubbleBlast");
+        InitWindow(screenWidth, screenHeight, "BubbleBlast Vertical");
         SetTargetFPS(60);
 
         createInitialBalls();
@@ -60,21 +58,17 @@ public:
     }
 
     void createInitialBalls() {
-        // Calculate how many balls fit horizontally in the game area
         int ballsPerRow = (int)((gameAreaWidth - 20) / (ballRadius * 2 + 2));
-        int rows = 7;
+        int rows = 5;
 
-        // Create a 2D grid to track ball colors for collision detection
         std::vector<std::vector<Color>> colorGrid(rows, std::vector<Color>(ballsPerRow, BLACK));
 
-        // Fill the grid with safe colors
         for (int row = 0; row < rows; row++) {
             for (int col = 0; col < ballsPerRow; col++) {
                 colorGrid[row][col] = getColorForPosition(colorGrid, row, col);
             }
         }
 
-        // Create balls using the safe color grid
         for (int row = 0; row < rows; row++) {
             for (int col = 0; col < ballsPerRow; col++) {
                 float x = gameAreaLeft + 10 + col * (ballRadius * 2 + 2);
@@ -92,7 +86,6 @@ public:
         std::mt19937 gen(rd());
         std::uniform_int_distribution<> colorDist(0, ballColors.size() - 1);
 
-        // Try multiple times to find a safe color
         for (int attempt = 0; attempt < 50; attempt++) {
             Color candidate = ballColors[colorDist(gen)];
 
@@ -101,12 +94,10 @@ public:
             }
         }
 
-        // If no safe color found after many attempts, use fallback
         return getFallbackColor(grid, row, col);
     }
 
     bool isColorSafe(std::vector<std::vector<Color>>& grid, int row, int col, Color color) {
-        // Check horizontal: don't create 3 in a row
         if (col >= 2) {
             Color left1 = grid[row][col - 1];
             Color left2 = grid[row][col - 2];
@@ -115,7 +106,6 @@ public:
             }
         }
 
-        // Check vertical: don't create 3 in a column
         if (row >= 2) {
             Color above1 = grid[row - 1][col];
             Color above2 = grid[row - 2][col];
@@ -124,13 +114,11 @@ public:
             }
         }
 
-        // Check immediate neighbors to prevent potential future triples
         if (col >= 1) {
             Color left = grid[row][col - 1];
             if (colorsEqual(color, left)) {
-                // Check if this would set up a potential triple with the next ball
                 if (col >= 2 && colorsEqual(left, grid[row][col - 2])) {
-                    return false; // Would complete a triple
+                    return false;
                 }
             }
         }
@@ -138,9 +126,8 @@ public:
         if (row >= 1) {
             Color above = grid[row - 1][col];
             if (colorsEqual(color, above)) {
-                // Check if this would set up a potential triple with the next ball
                 if (row >= 2 && colorsEqual(above, grid[row - 2][col])) {
-                    return false; // Would complete a triple
+                    return false;
                 }
             }
         }
@@ -152,17 +139,14 @@ public:
         std::random_device rd;
         std::mt19937 gen(rd());
 
-        // Try to find any color that's different from immediate neighbors
         for (int i = 0; i < ballColors.size(); i++) {
             Color candidate = ballColors[i];
             bool safeFromImmediate = true;
 
-            // Check left neighbor
             if (col >= 1 && colorsEqual(candidate, grid[row][col - 1])) {
                 safeFromImmediate = false;
             }
 
-            // Check above neighbor  
             if (row >= 1 && colorsEqual(candidate, grid[row - 1][col])) {
                 safeFromImmediate = false;
             }
@@ -172,7 +156,6 @@ public:
             }
         }
 
-        // Last resort: completely random
         std::uniform_int_distribution<> colorDist(0, ballColors.size() - 1);
         return ballColors[colorDist(gen)];
     }
@@ -185,7 +168,7 @@ public:
         if (currentBall) {
             delete currentBall;
         }
-        currentBall = new Ball(screenWidth / 2, gameAreaBottom - 50, ballRadius,
+        currentBall = new Ball(screenWidth / 2, gameAreaBottom - 30, ballRadius,
             ballColors[colorDist(gen)]);
         currentBall->isStuck = false;
         isAiming = true;
@@ -238,70 +221,56 @@ public:
     }
 
     void updatePhysics() {
-        // Update physics for current ball
+        // Update physics for current ball - БЕЗ ЗАМЕДЛЕНИЯ
         if (currentBall && !currentBall->isStuck) {
-            currentBall->velocity.y += gravity;
-            currentBall->velocity.x *= friction;
-            currentBall->velocity.y *= friction;
-
+            // НЕТ ТРЕНИЯ - скорость не уменьшается
             currentBall->position.x += currentBall->velocity.x;
             currentBall->position.y += currentBall->velocity.y;
 
             // Collision with game area boundaries
             if (currentBall->position.x - currentBall->radius < gameAreaLeft) {
                 currentBall->position.x = gameAreaLeft + currentBall->radius;
-                currentBall->velocity.x *= -0.7f;
+                currentBall->velocity.x *= -1.0f; // Полное отражение
             }
             else if (currentBall->position.x + currentBall->radius > gameAreaRight) {
                 currentBall->position.x = gameAreaRight - currentBall->radius;
-                currentBall->velocity.x *= -0.7f;
+                currentBall->velocity.x *= -1.0f; // Полное отражение
             }
 
             if (currentBall->position.y - currentBall->radius < gameAreaTop) {
                 currentBall->position.y = gameAreaTop + currentBall->radius;
-                currentBall->velocity.y *= -0.7f;
+                currentBall->velocity.y *= -1.0f; // Полное отражение
             }
             else if (currentBall->position.y + currentBall->radius > gameAreaBottom) {
                 currentBall->position.y = gameAreaBottom - currentBall->radius;
-                currentBall->velocity.y *= -0.9f;
-
-                if (fabs(currentBall->velocity.y) < 2.0f) {
-                    currentBall->velocity.y = -3.0f;
-                }
+                currentBall->velocity.y *= -1.0f; // Полное отражение
             }
         }
 
-        // Update unfixed balls in array
+        // Update unfixed balls in array - БЕЗ ЗАМЕДЛЕНИЯ
         for (auto& ball : balls) {
             if (!ball.isStuck && ball.active) {
-                ball.velocity.y += gravity;
-                ball.velocity.x *= friction;
-                ball.velocity.y *= friction;
-
+                // НЕТ ТРЕНИЯ - скорость не уменьшается
                 ball.position.x += ball.velocity.x;
                 ball.position.y += ball.velocity.y;
 
                 // Collision with game area boundaries
                 if (ball.position.x - ball.radius < gameAreaLeft) {
                     ball.position.x = gameAreaLeft + ball.radius;
-                    ball.velocity.x *= -0.7f;
+                    ball.velocity.x *= -1.0f; // Полное отражение
                 }
                 else if (ball.position.x + ball.radius > gameAreaRight) {
                     ball.position.x = gameAreaRight - ball.radius;
-                    ball.velocity.x *= -0.7f;
+                    ball.velocity.x *= -1.0f; // Полное отражение
                 }
 
                 if (ball.position.y - ball.radius < gameAreaTop) {
                     ball.position.y = gameAreaTop + ball.radius;
-                    ball.velocity.y *= -0.7f;
+                    ball.velocity.y *= -1.0f; // Полное отражение
                 }
                 else if (ball.position.y + ball.radius > gameAreaBottom) {
                     ball.position.y = gameAreaBottom - ball.radius;
-                    ball.velocity.y *= -0.9f;
-
-                    if (fabs(ball.velocity.y) < 2.0f) {
-                        ball.velocity.y = -3.0f;
-                    }
+                    ball.velocity.y *= -1.0f; // Полное отражение
                 }
             }
         }
@@ -346,10 +315,8 @@ public:
             }
         }
 
-        bool shouldStick = hasCollision ||
-            (fabs(currentBall->velocity.x) < minVelocity &&
-                fabs(currentBall->velocity.y) < minVelocity &&
-                currentBall->position.y < gameAreaBottom - 50);
+        // Шар прилипает только при столкновении с другими шарами
+        bool shouldStick = hasCollision;
 
         if (shouldStick) {
             currentBall->isStuck = true;
@@ -385,7 +352,11 @@ public:
             createNewBall();
         }
 
-        if (currentBall && currentBall->position.y > gameAreaBottom + 50) {
+        // Если шар вылетел за пределы игровой области, создаем новый
+        if (currentBall && (currentBall->position.y > gameAreaBottom + 50 ||
+            currentBall->position.y < gameAreaTop - 50 ||
+            currentBall->position.x < gameAreaLeft - 50 ||
+            currentBall->position.x > gameAreaRight + 50)) {
             createNewBall();
         }
     }
@@ -449,7 +420,7 @@ public:
     }
 
     void checkGameOver() {
-        if (balls.size() > 250) {
+        if (balls.size() > 100) { // Уменьшено максимальное количество шаров из-за большего размера
             gameOver = true;
         }
 
@@ -460,7 +431,7 @@ public:
             }
         }
 
-        if (highestY > gameAreaBottom - 30) {
+        if (highestY > gameAreaBottom - 80) { // Увеличено расстояние до низа из-за большего размера шаров
             gameOver = true;
         }
     }
@@ -470,7 +441,7 @@ public:
         ClearBackground(BLACK);
 
         DrawRectangle(0, screenHeight - 50, screenWidth, 50, DARKGRAY);
-        DrawRectangle(0, 0, screenWidth, 50, DARKGRAY);
+        DrawRectangle(0, 0, screenWidth, 60, DARKGRAY);
 
         DrawRectangle(gameAreaLeft, gameAreaTop, gameAreaWidth, gameAreaHeight, Fade(DARKBLUE, 0.1f));
         DrawRectangleLines(gameAreaLeft, gameAreaTop, gameAreaWidth, gameAreaHeight, BLUE);
@@ -490,24 +461,24 @@ public:
 
             if (isAiming) {
                 Vector2 endPoint = {
-                    currentBall->position.x + aimDirection.x * 150,
-                    currentBall->position.y + aimDirection.y * 150
+                    currentBall->position.x + aimDirection.x * 100,
+                    currentBall->position.y + aimDirection.y * 100
                 };
                 DrawLineV(currentBall->position, endPoint, YELLOW);
                 DrawCircleV(endPoint, 5, RED);
 
                 float power = sqrt(aimDirection.x * aimDirection.x + aimDirection.y * aimDirection.y) * 80;
-                DrawRectangle(screenWidth - 150, screenHeight - 45, (int)power, 10,
+                DrawRectangle(screenWidth - 120, screenHeight - 45, (int)power, 10,
                     power > 60 ? RED : (power > 40 ? ORANGE : GREEN));
             }
         }
 
-        DrawText(TextFormat("Score: %d", score), 20, 15, 20, WHITE);
-        DrawText(TextFormat("Balls: %zu", balls.size()), screenWidth - 150, 15, 20, WHITE);
-        DrawText("BubbleBlast", screenWidth / 2 - 60, 15, 20, BLUE);
+        DrawText(TextFormat("Score: %d", score), 20, 20, 20, WHITE);
+        DrawText(TextFormat("Balls: %zu", balls.size()), screenWidth - 120, 20, 20, WHITE);
+        DrawText("BubbleBlast", screenWidth / 2 - 60, 20, 20, BLUE);
 
         DrawText("LMB - shoot, R - restart", 20, screenHeight - 30, 15, LIGHTGRAY);
-        DrawText("Power:", screenWidth - 180, screenHeight - 45, 15, GREEN);
+        DrawText("Power:", screenWidth - 150, screenHeight - 45, 15, GREEN);
 
         if (isAiming) {
             float power = sqrt(aimDirection.x * aimDirection.x + aimDirection.y * aimDirection.y) * 100;
@@ -517,10 +488,10 @@ public:
 
         if (gameOver) {
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.8f));
-            DrawText("GAME OVER!", screenWidth / 2 - 100, screenHeight / 2 - 60, 40, RED);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 90, screenHeight / 2 - 10, 30, WHITE);
-            DrawText(TextFormat("Groups Destroyed: %d", score / 15), screenWidth / 2 - 110, screenHeight / 2 + 30, 25, YELLOW);
-            DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 80, 25, GREEN);
+            DrawText("GAME OVER!", screenWidth / 2 - 100, screenHeight / 2 - 60, 30, RED);
+            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 90, screenHeight / 2 - 10, 25, WHITE);
+            DrawText(TextFormat("Groups Destroyed: %d", score / 15), screenWidth / 2 - 110, screenHeight / 2 + 30, 20, YELLOW);
+            DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 80, 20, GREEN);
         }
 
         EndDrawing();
