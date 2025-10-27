@@ -20,8 +20,8 @@ class BallGame {
 private:
     const int screenWidth = 450;
     const int screenHeight = 800;
-    const float ballRadius = 15.0f; // УВЕЛИЧЕННЫЙ РАЗМЕР ШАРА
-    const float shootSpeed = 17.0f; // УМЕНЬШЕННАЯ СКОРОСТЬ
+    const float ballRadius = 15.0f; 
+    const float shootSpeed = 17.0f; 
     const float minVelocity = 0.3f;
 
     // Game area boundaries
@@ -58,7 +58,8 @@ public:
     }
 
     void createInitialBalls() {
-        int ballsPerRow = (int)((gameAreaWidth - 20) / (ballRadius * 2 + 2));
+        // Рассчитываем количество шаров, которые поместятся по ширине
+        int ballsPerRow = (int)((gameAreaWidth) / (ballRadius * 2));
         int rows = 5;
 
         std::vector<std::vector<Color>> colorGrid(rows, std::vector<Color>(ballsPerRow, BLACK));
@@ -69,10 +70,14 @@ public:
             }
         }
 
+        // Располагаем шары равномерно по всей ширине
+        float totalWidth = ballsPerRow * ballRadius * 2;
+        float startX = gameAreaLeft + (gameAreaWidth - totalWidth) / 2 + ballRadius;
+
         for (int row = 0; row < rows; row++) {
             for (int col = 0; col < ballsPerRow; col++) {
-                float x = gameAreaLeft + 10 + col * (ballRadius * 2 + 2);
-                float y = gameAreaTop + 10 + row * (ballRadius * 2 + 2);
+                float x = startX + col * (ballRadius * 2);
+                float y = gameAreaTop + 10 + row * (ballRadius * 2);
 
                 if (x + ballRadius < gameAreaRight && y + ballRadius < gameAreaBottom) {
                     balls.emplace_back(x, y, ballRadius, colorGrid[row][col]);
