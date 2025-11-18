@@ -5,7 +5,6 @@
 #include <random>
 #include <unordered_set>
 
-// Добавляем enum для состояний игры
 enum GameState {
     MAIN_MENU,
     PLAYING,
@@ -24,7 +23,7 @@ struct Ball {
     float stiffness;
     float damping;
     Vector2 originalPosition;
-    bool hasSupport; // Новое поле: имеет ли шар опору сверху
+    bool hasSupport;
 
     Ball(float x, float y, float r, Color c)
         : position{ x, y }, velocity{ 0, 0 }, acceleration{ 0, 0 },
@@ -53,16 +52,16 @@ private:
     const float maxMagnetDistance = 60.0f;
     const float separationForce = 0.1f;
     const float maxBallSpeed = 2.0f;
-    const float antiGravity = -0.2f; // Отрицательная гравитация - поднимает шары вверх
-    const float clusterMagnetStrength = 2.0f; // УВЕЛИЧЕНА: Сила притяжения к кластеру
-    const float maxClusterMagnetDistance = 300.0f; // УВЕЛИЧЕНА: Максимальная дистанция притяжения к кластеру
+    const float antiGravity = -0.2f;
+    const float clusterMagnetStrength = 2.0f;
+    const float maxClusterMagnetDistance = 300.0f;
 
     std::vector<Ball> balls;
     Ball* currentBall;
     bool isAiming;
     Vector2 aimDirection;
     int score;
-    GameState gameState; // Изменяем на enum
+    GameState gameState;
 
     Vector2 newBallPosition;
 
@@ -70,7 +69,6 @@ private:
         RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, SKYBLUE, LIME, VIOLET
     };
 
-    // Кнопки меню
     Rectangle startButton;
     Rectangle exitButton;
 
@@ -81,7 +79,6 @@ public:
 
         newBallPosition = { static_cast<float>(screenWidth) / 2.0f, gameAreaBottom - 30.0f };
 
-        // Инициализация кнопок меню
         startButton = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f, 200.0f, 50.0f };
         exitButton = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f + 70.0f, 200.0f, 50.0f };
 
@@ -117,7 +114,6 @@ public:
 
                 if (x + ballRadius < gameAreaRight && y + ballRadius < gameAreaBottom) {
                     balls.emplace_back(x, y, ballRadius, colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)]);
-                    // Шары в верхнем ряду всегда имеют опору
                     balls.back().hasSupport = (row == 0);
                 }
             }
@@ -198,7 +194,7 @@ public:
             ballColors[static_cast<size_t>(colorDist(gen))]);
         currentBall->isStuck = false;
         currentBall->originalPosition = newBallPosition;
-        currentBall->hasSupport = true; // Новый шар имеет опору (находится внизу)
+        currentBall->hasSupport = true;
         isAiming = true;
     }
 
@@ -214,7 +210,6 @@ public:
     void updateMainMenu() {
         Vector2 mousePoint = GetMousePosition();
 
-        // Проверка нажатия на кнопки
         if (CheckCollisionPointRec(mousePoint, startButton)) {
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
                 gameState = PLAYING;
@@ -237,9 +232,9 @@ public:
             updatePhysics();
             checkCollisions();
             updateBallPhysics();
-            checkSupport(); // Проверяем опору для всех шаров
-            applyClusterMagnetForces(); // ПЕРЕМЕЩЕНА ВЫШЕ: Применяем притяжение к кластеру ДО антигравитации
-            applyAntiGravity(); // Применяем антигравитацию к шарам без опоры
+            checkSupport();
+            applyClusterMagnetForces();
+            applyAntiGravity();
             checkGameOver();
             checkGameWin();
         }
@@ -270,7 +265,6 @@ public:
             targetPosition.x = gameAreaRight - ballRadius;
         }
 
-        // НЕ позволяем целиться за нижний край экрана
         if (targetPosition.y - ballRadius < gameAreaTop) {
             targetPosition.y = gameAreaTop + ballRadius;
         }
@@ -278,7 +272,6 @@ public:
             targetPosition.y = gameAreaBottom - ballRadius;
         }
 
-        // Дополнительная проверка: не позволяем целиться ниже стартовой позиции
         if (targetPosition.y > newBallPosition.y) {
             targetPosition.y = newBallPosition.y;
         }
@@ -317,7 +310,7 @@ public:
             aimDirection.y * shootSpeed * power
         };
         currentBall->isStuck = false;
-        currentBall->hasSupport = false; // Выстреленный шар временно без опоры
+        currentBall->hasSupport = false;
         isAiming = false;
     }
 
@@ -346,7 +339,6 @@ public:
                 currentBall->velocity.y *= -0.7f;
             }
 
-            // НЕ позволяем шару улететь за нижний край при выстреле
             if (currentBall->position.y + currentBall->radius > gameAreaBottom) {
                 currentBall->position.y = gameAreaBottom - currentBall->radius;
                 currentBall->velocity.y *= -0.7f;
@@ -381,9 +373,7 @@ public:
         }
     }
 
-    // УЛУЧШЕННАЯ функция: притяжение шаров без опоры к основному кластеру
     void applyClusterMagnetForces() {
-        // Находим центр масс основного кластера (шаров с опорой)
         Vector2 clusterCenter = { 0.0f, 0.0f };
         int clusterCount = 0;
 
@@ -395,7 +385,6 @@ public:
             clusterCount++;
         }
 
-        // Если нет основного кластера, используем нижнюю часть экрана как точку притяжения
         if (clusterCount == 0) {
             clusterCenter = { screenWidth / 2.0f, gameAreaBottom - 100.0f };
             clusterCount = 1;
@@ -405,7 +394,6 @@ public:
             clusterCenter.y /= clusterCount;
         }
 
-        // Применяем притяжение к шарикам без опоры
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck || ball.hasSupport) continue;
 
@@ -413,11 +401,9 @@ public:
             float dy = clusterCenter.y - ball.position.y;
             float distance = sqrtf(dx * dx + dy * dy);
 
-            // УСИЛЕННОЕ притяжение - работает на любой дистанции и сильнее
             if (distance > ballRadius * 2.0f) {
                 float force = clusterMagnetStrength * (0.5f + distance / 100.0f);
 
-                // Увеличиваем силу для далеких шаров
                 if (distance > 100.0f) force *= 2.0f;
 
                 float forceX = (dx / distance) * force;
@@ -426,7 +412,6 @@ public:
                 ball.velocity.x += forceX;
                 ball.velocity.y += forceY;
 
-                // Ограничиваем скорость притяжения
                 float speed = sqrtf(ball.velocity.x * ball.velocity.x + ball.velocity.y * ball.velocity.y);
                 if (speed > maxBallSpeed * 3.0f) {
                     ball.velocity.x = (ball.velocity.x / speed) * maxBallSpeed * 3.0f;
@@ -435,7 +420,6 @@ public:
             }
         }
 
-        // Также притягиваем текущий шар к кластеру, если он летит медленно
         if (currentBall && !currentBall->isStuck) {
             float currentSpeed = sqrtf(currentBall->velocity.x * currentBall->velocity.x +
                 currentBall->velocity.y * currentBall->velocity.y);
@@ -457,15 +441,12 @@ public:
         }
     }
 
-    // Новая функция: проверка опоры для шаров (сверху)
     void checkSupport() {
-        // Сначала сбрасываем флаги опоры для всех шаров
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck) continue;
             ball.hasSupport = false;
         }
 
-        // Шары на верху игровой области всегда имеют опору
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck) continue;
             if (ball.position.y - ball.radius <= gameAreaTop + 1.0f) {
@@ -473,23 +454,19 @@ public:
             }
         }
 
-        // Распространяем опору сверху вниз
         bool changed;
         do {
             changed = false;
             for (auto& ball : balls) {
                 if (!ball.active || !ball.isStuck || ball.hasSupport) continue;
 
-                // Проверяем, есть ли над этим шаром шар с опорой
                 for (const auto& other : balls) {
                     if (!other.active || !other.isStuck || !other.hasSupport) continue;
 
-                    // Проверяем, находится ли другой шар достаточно близко сверху
                     float dx = other.position.x - ball.position.x;
                     float dy = other.position.y - ball.position.y;
                     float distance = sqrtf(dx * dx + dy * dy);
 
-                    // Учитываем шары сверху (с небольшим допуском по вертикали)
                     if (distance < ballRadius * 2.2f && other.position.y < ball.position.y + ballRadius) {
                         ball.hasSupport = true;
                         changed = true;
@@ -497,18 +474,15 @@ public:
                     }
                 }
             }
-        } while (changed); // Повторяем, пока находятся новые шары с опорой
+        } while (changed);
     }
 
-    // Новая функция: применение антигравитации к шарам без опоры
     void applyAntiGravity() {
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck || ball.hasSupport) continue;
 
-            // УМЕНЬШЕНА антигравитация, чтобы не мешать притяжению
             ball.velocity.y += antiGravity * 0.3f;
 
-            // Ограничиваем максимальную скорость подъема
             if (ball.velocity.y < -1.5f) {
                 ball.velocity.y = -1.5f;
             }
@@ -618,14 +592,12 @@ public:
                 ball.velocity.x = 0.0f;
             }
 
-            // Обработка достижения верха
             if (ball.position.y - ball.radius < gameAreaTop) {
                 ball.position.y = gameAreaTop + ball.radius;
                 ball.velocity.y = 0.0f;
-                ball.hasSupport = true; // Шар на верху имеет опору
+                ball.hasSupport = true;
             }
 
-            // Обработка достижения низа
             if (ball.position.y + ball.radius > gameAreaBottom) {
                 ball.position.y = gameAreaBottom - ball.radius;
                 ball.velocity.y = 0.0f;
@@ -658,7 +630,7 @@ public:
 
         if (hasCollision && closestBall) {
             currentBall->isStuck = true;
-            currentBall->hasSupport = closestBall->hasSupport; // Наследуем опору
+            currentBall->hasSupport = closestBall->hasSupport;
 
             float impactTransfer = 0.1f;
             closestBall->velocity.x += currentBall->velocity.x * impactTransfer;
@@ -790,13 +762,10 @@ public:
     }
 
     void drawMainMenu() {
-        // Фон меню
         DrawRectangleGradientV(0, 0, screenWidth, screenHeight, DARKBLUE, BLACK);
 
-        // Название игры
         DrawText("BubbleBlast", screenWidth / 2 - MeasureText("BubbleBlast", 50) / 2, 150, 50, WHITE);
 
-        // Кнопка начала игры
         Color startColor = LIGHTGRAY;
         if (CheckCollisionPointRec(GetMousePosition(), startButton)) {
             startColor = GREEN;
@@ -808,7 +777,6 @@ public:
             startButton.y + startButton.height / 2 - 10,
             20, DARKBLUE);
 
-        // Кнопка выхода
         Color exitColor = LIGHTGRAY;
         if (CheckCollisionPointRec(GetMousePosition(), exitButton)) {
             exitColor = RED;
@@ -925,7 +893,7 @@ public:
             }
 
             update();
-                draw();
+            draw();
         }
     }
 
