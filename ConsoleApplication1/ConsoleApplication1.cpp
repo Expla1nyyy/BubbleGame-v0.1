@@ -4,13 +4,34 @@
 #include <algorithm>
 #include <random>
 #include <unordered_set>
+#include <memory>
+#include <string>
 
-// Добавляем enum для состояний игры
 enum GameState {
     MAIN_MENU,
+    LEVEL_SELECT,
     PLAYING,
     GAME_OVER,
     GAME_WON
+};
+
+enum BallType {
+    NORMAL,
+    UNIVERSAL,
+    BOMB,
+    RAINBOW
+};
+
+struct Level {
+    int levelNumber;
+    int targetScore;
+    int ballCount;
+    int specialBallChance;
+    bool allowBomb;
+    bool allowRainbow;
+    bool allowUniversal;
+    std::string name;
+    Color backgroundColor;
 };
 
 struct Ball {
@@ -24,12 +45,31 @@ struct Ball {
     float stiffness;
     float damping;
     Vector2 originalPosition;
-    bool hasSupport; // Новое поле: имеет ли шар опору сверху
+    bool hasSupport;
+    BallType type;
+    bool isSpecial;
+    int bombRadius;
+    Color originalColor;
 
-    Ball(float x, float y, float r, Color c)
+    Ball(float x, float y, float r, Color c, BallType t = NORMAL)
         : position{ x, y }, velocity{ 0, 0 }, acceleration{ 0, 0 },
         radius(r), color(c), active(true), isStuck(true),
-        stiffness(0.08f), damping(0.92f), originalPosition{ x, y }, hasSupport(true) {
+        stiffness(0.08f), damping(0.92f), originalPosition{ x, y },
+        hasSupport(true), type(t), isSpecial(t != NORMAL),
+        bombRadius(static_cast<int>(r * 3)), originalColor(c) {
+
+        if (type == UNIVERSAL) {
+            color = WHITE;
+            originalColor = WHITE;
+        }
+        else if (type == BOMB) {
+            color = BLACK;
+            originalColor = BLACK;
+        }
+        else if (type == RAINBOW) {
+            color = RED;
+            originalColor = RED;
+        }
     }
 };
 
@@ -53,16 +93,19 @@ private:
     const float maxMagnetDistance = 60.0f;
     const float separationForce = 0.1f;
     const float maxBallSpeed = 2.0f;
-    const float antiGravity = -0.2f; // Отрицательная гравитация - поднимает шары вверх
-    const float clusterMagnetStrength = 2.0f; // УВЕЛИЧЕНА: Сила притяжения к кластеру
-    const float maxClusterMagnetDistance = 300.0f; // УВЕЛИЧЕНА: Максимальная дистанция притяжения к кластеру
+    const float antiGravity = -0.2f;
+    const float clusterMagnetStrength = 2.0f;
+    const float maxClusterMagnetDistance = 300.0f;
 
     std::vector<Ball> balls;
     Ball* currentBall;
     bool isAiming;
     Vector2 aimDirection;
     int score;
-    GameState gameState; // Изменяем на enum
+    GameState gameState;
+    int currentLevel;
+    std::vector<Level> levels;
+    bool isLevelMode;
 
     Vector2 newBallPosition;
 
@@ -70,58 +113,312 @@ private:
         RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, SKYBLUE, LIME, VIOLET
     };
 
-    // Кнопки меню
-    Rectangle startButton;
-    Rectangle exitButton;
+    int UNIVERSAL_CHANCE = 5;
+    int BOMB_CHANCE = 3;
+    int RAINBOW_CHANCE = 2;
+
+    struct Particle {
+        Vector2 position;
+        Vector2 velocity;
+        Color color;
+        float size;
+        float life;
+    };
+
+    std::vector<Particle> particles;
+
+    Texture2D menuBackgroundTexture;
+    Texture2D gameBackgroundTexture;
+    Texture2D startButtonTexture;
+    Texture2D exitButtonTexture;
+    Texture2D levelsButtonTexture;
+    Texture2D logoTexture;
+    Texture2D universalIconTexture;
+    Texture2D bombIconTexture;
+    Texture2D rainbowIconTexture;
+    Texture2D backButtonTexture;
+
+    bool texturesLoaded = false;
+
+    Rectangle startButtonRect;
+    Rectangle levelsButtonRect;
+    Rectangle exitButtonRect;
 
 public:
-    BallGame() : isAiming(false), score(0), gameState(MAIN_MENU), currentBall(nullptr) {
+    BallGame() : isAiming(false), score(0), gameState(MAIN_MENU),
+        currentBall(nullptr), currentLevel(1), isLevelMode(false) {
         InitWindow(screenWidth, screenHeight, "BubbleBlast");
         SetTargetFPS(60);
 
+        InitAudioDevice();
+        loadTextures();
+
+        initializeLevels();
+
         newBallPosition = { static_cast<float>(screenWidth) / 2.0f, gameAreaBottom - 30.0f };
 
-        // Инициализация кнопок меню
-        startButton = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f, 200.0f, 50.0f };
-        exitButton = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f + 70.0f, 200.0f, 50.0f };
+        startButtonRect = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f, 200.0f, 70.0f };
+        levelsButtonRect = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f + 80.0f, 200.0f, 70.0f };
+        exitButtonRect = { screenWidth / 2.0f - 100.0f, screenHeight / 2.0f + 160.0f, 200.0f, 70.0f };
 
-        createInitialBalls();
+        createInitialBalls(false);
         createNewBall();
     }
 
     ~BallGame() {
         if (currentBall) delete currentBall;
+
+        unloadTextures();
+        CloseAudioDevice();
         CloseWindow();
     }
 
-    void createInitialBalls() {
-        int ballsPerRow = static_cast<int>(gameAreaWidth / (ballRadius * 2.0f));
-        int rows = 10;
+    void initializeLevels() {
+        levels.clear();
 
-        std::vector<std::vector<Color>> colorGrid(static_cast<size_t>(rows),
-            std::vector<Color>(static_cast<size_t>(ballsPerRow), BLACK));
+        levels.push_back({
+            1,
+            500,
+            50,
+            0,
+            false,
+            false,
+            false,
+            "Tutorial",
+            DARKBLUE
+            });
 
-        for (int row = 0; row < rows; row++) {
-            for (int col = 0; col < ballsPerRow; col++) {
-                colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)] = getColorForPosition(colorGrid, row, col);
-            }
+        levels.push_back({
+            2,
+            1000,
+            70,
+            5,
+            true,
+            false,
+            false,
+            "Easy Mode",
+            DARKGREEN
+            });
+
+        levels.push_back({
+            3,
+            2000,
+            90,
+            10,
+            true,
+            true,
+            false,
+            "Medium Challenge",
+            PURPLE
+            });
+
+        levels.push_back({
+            4,
+            3500,
+            110,
+            15,
+            true,
+            true,
+            true,
+            "Hard Level",
+            DARKPURPLE
+            });
+
+        levels.push_back({
+            5,
+            5000,
+            130,
+            20,
+            true,
+            true,
+            true,
+            "Expert Mode",
+            MAROON
+            });
+    }
+
+    void loadTextures() {
+        if (FileExists("assets/logo.png")) {
+            logoTexture = LoadTexture("assets/logo.png");
+        }
+        else {
+            logoTexture = { 0 };
         }
 
-        float totalWidth = static_cast<float>(ballsPerRow) * ballRadius * 2.0f;
-        float startX = gameAreaLeft + (gameAreaWidth - totalWidth) / 2.0f + ballRadius;
+        if (FileExists("assets/menu_background.png")) {
+            menuBackgroundTexture = LoadTexture("assets/menu_background.png");
+        }
+        else {
+            menuBackgroundTexture = { 0 };
+        }
 
-        for (int row = 0; row < rows; row++) {
-            for (int col = 0; col < ballsPerRow; col++) {
-                float x = startX + static_cast<float>(col) * (ballRadius * 2.0f);
-                float y = gameAreaTop + 10.0f + static_cast<float>(row) * (ballRadius * 2.0f);
+        if (FileExists("assets/game_background.png")) {
+            gameBackgroundTexture = LoadTexture("assets/game_background.png");
+        }
+        else {
+            gameBackgroundTexture = { 0 };
+        }
 
-                if (x + ballRadius < gameAreaRight && y + ballRadius < gameAreaBottom) {
-                    balls.emplace_back(x, y, ballRadius, colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)]);
-                    // Шары в верхнем ряду всегда имеют опору
-                    balls.back().hasSupport = (row == 0);
+        if (FileExists("assets/start_button.png")) {
+            startButtonTexture = LoadTexture("assets/start_button.png");
+        }
+        else {
+            startButtonTexture = { 0 };
+        }
+
+        if (FileExists("assets/levels_button.png")) {
+            levelsButtonTexture = LoadTexture("assets/levels_button.png");
+        }
+        else {
+            levelsButtonTexture = { 0 };
+        }
+
+        if (FileExists("assets/exit_button.png")) {
+            exitButtonTexture = LoadTexture("assets/exit_button.png");
+        }
+        else {
+            exitButtonTexture = { 0 };
+        }
+
+        if (FileExists("assets/universal_icon.png")) {
+            universalIconTexture = LoadTexture("assets/universal_icon.png");
+        }
+        else {
+            universalIconTexture = { 0 };
+        }
+
+        if (FileExists("assets/bomb_icon.png")) {
+            bombIconTexture = LoadTexture("assets/bomb_icon.png");
+        }
+        else {
+            bombIconTexture = { 0 };
+        }
+
+        if (FileExists("assets/rainbow_icon.png")) {
+            rainbowIconTexture = LoadTexture("assets/rainbow_icon.png");
+        }
+        else {
+            rainbowIconTexture = { 0 };
+        }
+
+        if (FileExists("assets/back_button.png")) {
+            backButtonTexture = LoadTexture("assets/back_button.png");
+        }
+        else {
+            backButtonTexture = { 0 };
+        }
+
+        texturesLoaded = true;
+    }
+
+    void unloadTextures() {
+        if (logoTexture.id != 0) UnloadTexture(logoTexture);
+        if (menuBackgroundTexture.id != 0) UnloadTexture(menuBackgroundTexture);
+        if (gameBackgroundTexture.id != 0) UnloadTexture(gameBackgroundTexture);
+        if (startButtonTexture.id != 0) UnloadTexture(startButtonTexture);
+        if (levelsButtonTexture.id != 0) UnloadTexture(levelsButtonTexture);
+        if (exitButtonTexture.id != 0) UnloadTexture(exitButtonTexture);
+        if (universalIconTexture.id != 0) UnloadTexture(universalIconTexture);
+        if (bombIconTexture.id != 0) UnloadTexture(bombIconTexture);
+        if (rainbowIconTexture.id != 0) UnloadTexture(rainbowIconTexture);
+        if (backButtonTexture.id != 0) UnloadTexture(backButtonTexture);
+    }
+
+    void createInitialBalls(bool isLevel) {
+        balls.clear();
+
+        if (isLevel) {
+            if (currentLevel < 1 || currentLevel > static_cast<int>(levels.size())) {
+                currentLevel = 1;
+            }
+
+            Level& level = levels[static_cast<size_t>(currentLevel) - 1];
+
+            UNIVERSAL_CHANCE = level.allowUniversal ? 5 : 0;
+            BOMB_CHANCE = level.allowBomb ? 3 : 0;
+            RAINBOW_CHANCE = level.allowRainbow ? 2 : 0;
+
+            int ballsPerRow = static_cast<int>(gameAreaWidth / (ballRadius * 2.0f));
+            int rows = static_cast<int>(level.ballCount / ballsPerRow) + 1;
+
+            std::vector<std::vector<Color>> colorGrid(static_cast<size_t>(rows),
+                std::vector<Color>(static_cast<size_t>(ballsPerRow), BLACK));
+
+            for (int row = 0; row < rows; row++) {
+                for (int col = 0; col < ballsPerRow; col++) {
+                    colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)] = getColorForPosition(colorGrid, row, col);
+                }
+            }
+
+            float totalWidth = static_cast<float>(ballsPerRow) * ballRadius * 2.0f;
+            float startX = gameAreaLeft + (gameAreaWidth - totalWidth) / 2.0f + ballRadius;
+
+            int ballsCreated = 0;
+            for (int row = 0; row < rows && ballsCreated < level.ballCount; row++) {
+                for (int col = 0; col < ballsPerRow && ballsCreated < level.ballCount; col++) {
+                    float x = startX + static_cast<float>(col) * (ballRadius * 2.0f);
+                    float y = gameAreaTop + 10.0f + static_cast<float>(row) * (ballRadius * 2.0f);
+
+                    if (x + ballRadius < gameAreaRight && y + ballRadius < gameAreaBottom) {
+                        balls.emplace_back(x, y, ballRadius, colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)]);
+                        balls.back().hasSupport = (row == 0);
+                        ballsCreated++;
+                    }
                 }
             }
         }
+        else {
+            UNIVERSAL_CHANCE = 5;
+            BOMB_CHANCE = 3;
+            RAINBOW_CHANCE = 2;
+
+            int ballsPerRow = static_cast<int>(gameAreaWidth / (ballRadius * 2.0f));
+            int rows = 10;
+
+            std::vector<std::vector<Color>> colorGrid(static_cast<size_t>(rows),
+                std::vector<Color>(static_cast<size_t>(ballsPerRow), BLACK));
+
+            for (int row = 0; row < rows; row++) {
+                for (int col = 0; col < ballsPerRow; col++) {
+                    colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)] = getColorForPosition(colorGrid, row, col);
+                }
+            }
+
+            float totalWidth = static_cast<float>(ballsPerRow) * ballRadius * 2.0f;
+            float startX = gameAreaLeft + (gameAreaWidth - totalWidth) / 2.0f + ballRadius;
+
+            for (int row = 0; row < rows; row++) {
+                for (int col = 0; col < ballsPerRow; col++) {
+                    float x = startX + static_cast<float>(col) * (ballRadius * 2.0f);
+                    float y = gameAreaTop + 10.0f + static_cast<float>(row) * (ballRadius * 2.0f);
+
+                    if (x + ballRadius < gameAreaRight && y + ballRadius < gameAreaBottom) {
+                        balls.emplace_back(x, y, ballRadius, colorGrid[static_cast<size_t>(row)][static_cast<size_t>(col)]);
+                        balls.back().hasSupport = (row == 0);
+                    }
+                }
+            }
+        }
+    }
+
+    BallType getRandomBallType() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> chanceDist(0, 99);
+
+        int chance = chanceDist(gen);
+
+        if (chance < RAINBOW_CHANCE) {
+            return RAINBOW;
+        }
+        else if (chance < RAINBOW_CHANCE + BOMB_CHANCE) {
+            return BOMB;
+        }
+        else if (chance < RAINBOW_CHANCE + BOMB_CHANCE + UNIVERSAL_CHANCE) {
+            return UNIVERSAL;
+        }
+
+        return NORMAL;
     }
 
     Color getColorForPosition(std::vector<std::vector<Color>>& grid, int row, int col) {
@@ -192,43 +489,134 @@ public:
 
         if (currentBall) {
             delete currentBall;
+            currentBall = nullptr;
         }
 
+        BallType ballType = getRandomBallType();
+        Color ballColor = ballColors[static_cast<size_t>(colorDist(gen))];
+
         currentBall = new Ball(newBallPosition.x, newBallPosition.y, ballRadius,
-            ballColors[static_cast<size_t>(colorDist(gen))]);
+            ballColor, ballType);
         currentBall->isStuck = false;
         currentBall->originalPosition = newBallPosition;
-        currentBall->hasSupport = true; // Новый шар имеет опору (находится внизу)
+        currentBall->hasSupport = true;
         isAiming = true;
     }
 
     void update() {
+        updateParticles();
+
         if (gameState == MAIN_MENU) {
             updateMainMenu();
+        }
+        else if (gameState == LEVEL_SELECT) {
+            updateLevelSelect();
         }
         else if (gameState == PLAYING) {
             updateGame();
         }
     }
 
+    void updateParticles() {
+        for (auto it = particles.begin(); it != particles.end(); ) {
+            it->position.x += it->velocity.x;
+            it->position.y += it->velocity.y;
+            it->life -= 0.02f;
+            it->size *= 0.98f;
+
+            if (it->life <= 0.0f) {
+                it = particles.erase(it);
+            }
+            else {
+                ++it;
+            }
+        }
+    }
+
+    void createExplosion(Vector2 position, Color color, int count = 30) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<float> dist(-3.0f, 3.0f);
+        std::uniform_real_distribution<float> lifeDist(0.5f, 1.5f);
+
+        for (int i = 0; i < count; i++) {
+            Particle p;
+            p.position = position;
+            p.velocity = { dist(gen), dist(gen) };
+            p.color = color;
+            p.size = 3.0f + static_cast<float>(rand() % 5);
+            p.life = lifeDist(gen);
+            particles.push_back(p);
+        }
+    }
+
     void updateMainMenu() {
         Vector2 mousePoint = GetMousePosition();
 
-        // Проверка нажатия на кнопки
-        if (CheckCollisionPointRec(mousePoint, startButton)) {
+        if (CheckCollisionPointRec(mousePoint, startButtonRect)) {
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                isLevelMode = false;
                 gameState = PLAYING;
+                restart();
             }
         }
 
-        if (CheckCollisionPointRec(mousePoint, exitButton)) {
+        if (CheckCollisionPointRec(mousePoint, levelsButtonRect)) {
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                gameState = LEVEL_SELECT;
+            }
+        }
+
+        if (CheckCollisionPointRec(mousePoint, exitButtonRect)) {
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
                 CloseWindow();
             }
         }
     }
 
+    void updateLevelSelect() {
+        Vector2 mousePoint = GetMousePosition();
+
+        float buttonSize = 60.0f;
+        float buttonMargin = 20.0f;
+        Rectangle backButtonRect = {
+            screenWidth - buttonSize - buttonMargin,
+            screenHeight - buttonSize - buttonMargin,
+            buttonSize,
+            buttonSize
+        };
+
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            if (CheckCollisionPointRec(mousePoint, backButtonRect)) {
+                gameState = MAIN_MENU;
+                return;
+            }
+
+            int levelButtonHeight = 70;
+            int startY = 100;
+
+            for (size_t i = 0; i < levels.size(); i++) {
+                Rectangle levelRect = { 50.0f, startY + static_cast<float>(i) * (levelButtonHeight + 10.0f),
+                                      screenWidth - 100.0f, static_cast<float>(levelButtonHeight) };
+
+                if (CheckCollisionPointRec(mousePoint, levelRect)) {
+                    isLevelMode = true;
+                    currentLevel = static_cast<int>(i) + 1;
+                    gameState = PLAYING;
+                    restart();
+                    break;
+                }
+            }
+        }
+
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            gameState = MAIN_MENU;
+        }
+    }
+
     void updateGame() {
+        updateRainbowBalls();
+
         if (isAiming) {
             handleAiming();
             updateBallPhysics();
@@ -237,15 +625,41 @@ public:
             updatePhysics();
             checkCollisions();
             updateBallPhysics();
-            checkSupport(); // Проверяем опору для всех шаров
-            applyClusterMagnetForces(); // ПЕРЕМЕЩЕНА ВЫШЕ: Применяем притяжение к кластеру ДО антигравитации
-            applyAntiGravity(); // Применяем антигравитацию к шарам без опоры
+            checkSupport();
+            applyClusterMagnetForces();
+            applyAntiGravity();
             checkGameOver();
-            checkGameWin();
+            if (isLevelMode) {
+                checkLevelComplete();
+            }
+        }
+    }
+
+    void updateRainbowBalls() {
+        static float rainbowTimer = 0.0f;
+        rainbowTimer += GetFrameTime();
+
+        if (rainbowTimer > 0.1f) {
+            rainbowTimer = 0.0f;
+
+            for (auto& ball : balls) {
+                if (ball.type == RAINBOW && ball.active) {
+                    if (ball.color.r == 255 && ball.color.g == 0 && ball.color.b == 0) ball.color = ORANGE;
+                    else if (ball.color.r == 255 && ball.color.g < 255 && ball.color.b == 0) ball.color = YELLOW;
+                    else if (ball.color.r == 255 && ball.color.g == 255 && ball.color.b == 0) ball.color = GREEN;
+                    else if (ball.color.r == 0 && ball.color.g == 255 && ball.color.b == 0) ball.color = SKYBLUE;
+                    else if (ball.color.r == 0 && ball.color.g == 255 && ball.color.b == 255) ball.color = BLUE;
+                    else if (ball.color.r == 0 && ball.color.g == 0 && ball.color.b == 255) ball.color = PURPLE;
+                    else if (ball.color.r == 255 && ball.color.g == 0 && ball.color.b == 255) ball.color = RED;
+                    ball.originalColor = ball.color;
+                }
+            }
         }
     }
 
     void handleAiming() {
+        if (!currentBall) return;
+
         Vector2 mousePos = GetMousePosition();
 
         Vector2 targetPosition = {
@@ -270,7 +684,6 @@ public:
             targetPosition.x = gameAreaRight - ballRadius;
         }
 
-        // НЕ позволяем целиться за нижний край экрана
         if (targetPosition.y - ballRadius < gameAreaTop) {
             targetPosition.y = gameAreaTop + ballRadius;
         }
@@ -278,7 +691,6 @@ public:
             targetPosition.y = gameAreaBottom - ballRadius;
         }
 
-        // Дополнительная проверка: не позволяем целиться ниже стартовой позиции
         if (targetPosition.y > newBallPosition.y) {
             targetPosition.y = newBallPosition.y;
         }
@@ -304,6 +716,8 @@ public:
     }
 
     void shootBall() {
+        if (!currentBall) return;
+
         float dx = currentBall->position.x - newBallPosition.x;
         float dy = currentBall->position.y - newBallPosition.y;
         float distance = sqrtf(dx * dx + dy * dy);
@@ -317,7 +731,7 @@ public:
             aimDirection.y * shootSpeed * power
         };
         currentBall->isStuck = false;
-        currentBall->hasSupport = false; // Выстреленный шар временно без опоры
+        currentBall->hasSupport = false;
         isAiming = false;
     }
 
@@ -346,7 +760,6 @@ public:
                 currentBall->velocity.y *= -0.7f;
             }
 
-            // НЕ позволяем шару улететь за нижний край при выстреле
             if (currentBall->position.y + currentBall->radius > gameAreaBottom) {
                 currentBall->position.y = gameAreaBottom - currentBall->radius;
                 currentBall->velocity.y *= -0.7f;
@@ -381,9 +794,7 @@ public:
         }
     }
 
-    // УЛУЧШЕННАЯ функция: притяжение шаров без опоры к основному кластеру
     void applyClusterMagnetForces() {
-        // Находим центр масс основного кластера (шаров с опорой)
         Vector2 clusterCenter = { 0.0f, 0.0f };
         int clusterCount = 0;
 
@@ -395,7 +806,6 @@ public:
             clusterCount++;
         }
 
-        // Если нет основного кластера, используем нижнюю часть экрана как точку притяжения
         if (clusterCount == 0) {
             clusterCenter = { screenWidth / 2.0f, gameAreaBottom - 100.0f };
             clusterCount = 1;
@@ -405,7 +815,6 @@ public:
             clusterCenter.y /= clusterCount;
         }
 
-        // Применяем притяжение к шарикам без опоры
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck || ball.hasSupport) continue;
 
@@ -413,11 +822,9 @@ public:
             float dy = clusterCenter.y - ball.position.y;
             float distance = sqrtf(dx * dx + dy * dy);
 
-            // УСИЛЕННОЕ притяжение - работает на любой дистанции и сильнее
             if (distance > ballRadius * 2.0f) {
                 float force = clusterMagnetStrength * (0.5f + distance / 100.0f);
 
-                // Увеличиваем силу для далеких шаров
                 if (distance > 100.0f) force *= 2.0f;
 
                 float forceX = (dx / distance) * force;
@@ -426,7 +833,6 @@ public:
                 ball.velocity.x += forceX;
                 ball.velocity.y += forceY;
 
-                // Ограничиваем скорость притяжения
                 float speed = sqrtf(ball.velocity.x * ball.velocity.x + ball.velocity.y * ball.velocity.y);
                 if (speed > maxBallSpeed * 3.0f) {
                     ball.velocity.x = (ball.velocity.x / speed) * maxBallSpeed * 3.0f;
@@ -435,7 +841,6 @@ public:
             }
         }
 
-        // Также притягиваем текущий шар к кластеру, если он летит медленно
         if (currentBall && !currentBall->isStuck) {
             float currentSpeed = sqrtf(currentBall->velocity.x * currentBall->velocity.x +
                 currentBall->velocity.y * currentBall->velocity.y);
@@ -457,15 +862,12 @@ public:
         }
     }
 
-    // Новая функция: проверка опоры для шаров (сверху)
     void checkSupport() {
-        // Сначала сбрасываем флаги опоры для всех шаров
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck) continue;
             ball.hasSupport = false;
         }
 
-        // Шары на верху игровой области всегда имеют опору
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck) continue;
             if (ball.position.y - ball.radius <= gameAreaTop + 1.0f) {
@@ -473,42 +875,44 @@ public:
             }
         }
 
-        // Распространяем опору сверху вниз
         bool changed;
+        int maxIterations = 1000;
+        int iterations = 0;
+
         do {
             changed = false;
+            iterations++;
+
             for (auto& ball : balls) {
                 if (!ball.active || !ball.isStuck || ball.hasSupport) continue;
 
-                // Проверяем, есть ли над этим шаром шар с опорой
                 for (const auto& other : balls) {
                     if (!other.active || !other.isStuck || !other.hasSupport) continue;
 
-                    // Проверяем, находится ли другой шар достаточно близко сверху
                     float dx = other.position.x - ball.position.x;
                     float dy = other.position.y - ball.position.y;
                     float distance = sqrtf(dx * dx + dy * dy);
 
-                    // Учитываем шары сверху (с небольшим допуском по вертикали)
-                    if (distance < ballRadius * 2.2f && other.position.y < ball.position.y + ballRadius) {
+                    if (distance < ballRadius * 2.2f) {
                         ball.hasSupport = true;
                         changed = true;
                         break;
                     }
                 }
             }
-        } while (changed); // Повторяем, пока находятся новые шары с опорой
+
+            if (iterations >= maxIterations) {
+                break;
+            }
+        } while (changed);
     }
 
-    // Новая функция: применение антигравитации к шарам без опоры
     void applyAntiGravity() {
         for (auto& ball : balls) {
             if (!ball.active || !ball.isStuck || ball.hasSupport) continue;
 
-            // УМЕНЬШЕНА антигравитация, чтобы не мешать притяжению
             ball.velocity.y += antiGravity * 0.3f;
 
-            // Ограничиваем максимальную скорость подъема
             if (ball.velocity.y < -1.5f) {
                 ball.velocity.y = -1.5f;
             }
@@ -613,19 +1017,17 @@ public:
                 ball.position.x = gameAreaLeft + ball.radius + margin;
                 ball.velocity.x = 0.0f;
             }
-            else if (ball.position.x + ball.radius > gameAreaRight - margin) {
+            else if (ball.position.x + ballRadius > gameAreaRight - margin) {
                 ball.position.x = gameAreaRight - ball.radius - margin;
                 ball.velocity.x = 0.0f;
             }
 
-            // Обработка достижения верха
             if (ball.position.y - ball.radius < gameAreaTop) {
                 ball.position.y = gameAreaTop + ball.radius;
                 ball.velocity.y = 0.0f;
-                ball.hasSupport = true; // Шар на верху имеет опору
+                ball.hasSupport = true;
             }
 
-            // Обработка достижения низа
             if (ball.position.y + ball.radius > gameAreaBottom) {
                 ball.position.y = gameAreaBottom - ball.radius;
                 ball.velocity.y = 0.0f;
@@ -658,7 +1060,7 @@ public:
 
         if (hasCollision && closestBall) {
             currentBall->isStuck = true;
-            currentBall->hasSupport = closestBall->hasSupport; // Наследуем опору
+            currentBall->hasSupport = closestBall->hasSupport;
 
             float impactTransfer = 0.1f;
             closestBall->velocity.x += currentBall->velocity.x * impactTransfer;
@@ -675,17 +1077,123 @@ public:
                 currentBall->originalPosition = currentBall->position;
             }
 
-            balls.push_back(*currentBall);
+            if (currentBall->type == BOMB) {
+                activateBomb(*currentBall);
+                delete currentBall;
+                currentBall = nullptr;
+                createNewBall();
+                return;
+            }
+            else if (currentBall->type == RAINBOW) {
+                balls.push_back(*currentBall);
+                currentBall = nullptr;
+            }
+            else {
+                balls.push_back(*currentBall);
+                currentBall = nullptr;
+            }
+
             checkBallGroups();
+
             createNewBall();
         }
 
-        if (currentBall && (currentBall->position.y > gameAreaBottom + 50.0f ||
-            currentBall->position.y < gameAreaTop - 50.0f ||
-            currentBall->position.x < gameAreaLeft - 50.0f ||
-            currentBall->position.x > gameAreaRight + 50.0f)) {
-            createNewBall();
+        if (currentBall && !currentBall->isStuck) {
+            if (currentBall->position.y > gameAreaBottom + 50.0f ||
+                currentBall->position.y < gameAreaTop - 50.0f ||
+                currentBall->position.x < gameAreaLeft - 50.0f ||
+                currentBall->position.x > gameAreaRight + 50.0f) {
+
+                if (currentBall) {
+                    delete currentBall;
+                    currentBall = nullptr;
+                }
+                createNewBall();
+            }
         }
+    }
+
+    void handleSpecialBallCollision(Ball& specialBall) {
+        switch (specialBall.type) {
+        case UNIVERSAL:
+            break;
+
+        case BOMB:
+            activateBomb(specialBall);
+            break;
+
+        case RAINBOW:
+            break;
+
+        case NORMAL:
+        default:
+            break;
+        }
+    }
+
+    void activateBomb(Ball& bomb) {
+        createExplosion(bomb.position, YELLOW, 50);
+
+        std::vector<size_t> toRemove;
+        for (size_t i = 0; i < balls.size(); i++) {
+            if (!balls[i].active) continue;
+
+            float dx = balls[i].position.x - bomb.position.x;
+            float dy = balls[i].position.y - bomb.position.y;
+            float distance = sqrtf(dx * dx + dy * dy);
+
+            if (distance < bomb.bombRadius) {
+                toRemove.push_back(i);
+            }
+        }
+
+        for (size_t index : toRemove) {
+            balls[index].active = false;
+            createExplosion(balls[index].position, RED, 10);
+        }
+
+        balls.erase(std::remove_if(balls.begin(), balls.end(),
+            [](const Ball& ball) { return !ball.active; }),
+            balls.end());
+
+        score += static_cast<int>(toRemove.size()) * 20;
+
+        applyGentleRemovalImpulse();
+    }
+
+    void activateRainbow(Ball& rainbowBall) {
+        createExplosion(rainbowBall.position, rainbowBall.color, 40);
+
+        std::vector<size_t> toRemove;
+        Color targetColor = rainbowBall.originalColor;
+
+        for (size_t i = 0; i < balls.size(); i++) {
+            if (!balls[i].active) continue;
+
+            if (colorsEqual(balls[i].color, targetColor)) {
+                toRemove.push_back(i);
+            }
+        }
+
+        for (size_t index : toRemove) {
+            balls[index].active = false;
+            createExplosion(balls[index].position, targetColor, 5);
+        }
+
+        for (size_t i = 0; i < balls.size(); i++) {
+            if (&balls[i] == &rainbowBall) {
+                balls[i].active = false;
+                break;
+            }
+        }
+
+        balls.erase(std::remove_if(balls.begin(), balls.end(),
+            [](const Ball& ball) { return !ball.active; }),
+            balls.end());
+
+        score += static_cast<int>(toRemove.size()) * 25;
+
+        applyGentleRemovalImpulse();
     }
 
     void checkBallGroups() {
@@ -698,20 +1206,35 @@ public:
             if (!balls[i].active || visited[i] || !balls[i].isStuck) continue;
 
             std::vector<int> group;
-            findConnectedBalls(static_cast<int>(i), group, balls[i].color, visited);
+            findConnectedBalls(static_cast<int>(i), group, balls[i].color, visited, balls[i].type);
 
-            if (group.size() >= 3) {
+            if (group.size() >= 4 || balls[i].type == UNIVERSAL) {
+                if (balls[i].type == RAINBOW && group.size() >= 4) {
+                    activateRainbow(balls[static_cast<size_t>(group[0])]);
+                    return;
+                }
+
                 toRemove.insert(toRemove.end(), group.begin(), group.end());
                 score += static_cast<int>(group.size()) * 15;
 
                 if (group.size() >= 5) score += static_cast<int>(group.size()) * 10;
                 if (group.size() >= 7) score += static_cast<int>(group.size()) * 20;
                 if (group.size() >= 10) score += static_cast<int>(group.size()) * 30;
+
+                if (group.size() == 4) {
+                    score += 25;
+                }
+
+                if (balls[i].type == UNIVERSAL) {
+                    score += 50;
+                }
             }
         }
 
         for (int index : toRemove) {
             balls[static_cast<size_t>(index)].active = false;
+            createExplosion(balls[static_cast<size_t>(index)].position,
+                balls[static_cast<size_t>(index)].color, 5);
         }
 
         if (!toRemove.empty()) {
@@ -734,7 +1257,8 @@ public:
         }
     }
 
-    void findConnectedBalls(int startIndex, std::vector<int>& group, Color targetColor, std::vector<bool>& visited) {
+    void findConnectedBalls(int startIndex, std::vector<int>& group, Color targetColor,
+        std::vector<bool>& visited, BallType ballType) {
         if (visited[static_cast<size_t>(startIndex)]) return;
 
         visited[static_cast<size_t>(startIndex)] = true;
@@ -743,13 +1267,30 @@ public:
         for (size_t i = 0; i < balls.size(); i++) {
             if (visited[i] || !balls[i].active || !balls[i].isStuck) continue;
 
-            if (colorsEqual(balls[i].color, targetColor)) {
+            bool colorMatches = false;
+            if (ballType == UNIVERSAL) {
+                colorMatches = true;
+            }
+            else if (balls[i].type == UNIVERSAL) {
+                colorMatches = true;
+            }
+            else if (ballType == RAINBOW) {
+                colorMatches = true;
+            }
+            else if (balls[i].type == RAINBOW) {
+                colorMatches = true;
+            }
+            else {
+                colorMatches = colorsEqual(balls[i].color, targetColor);
+            }
+
+            if (colorMatches) {
                 float dx = balls[i].position.x - balls[static_cast<size_t>(startIndex)].position.x;
                 float dy = balls[i].position.y - balls[static_cast<size_t>(startIndex)].position.y;
                 float distance = sqrtf(dx * dx + dy * dy);
 
                 if (distance < ballRadius * 2.2f) {
-                    findConnectedBalls(static_cast<int>(i), group, targetColor, visited);
+                    findConnectedBalls(static_cast<int>(i), group, targetColor, visited, ballType);
                 }
             }
         }
@@ -765,18 +1306,33 @@ public:
         }
     }
 
-    void checkGameWin() {
-        if (balls.empty()) {
-            gameState = GAME_WON;
+    void checkLevelComplete() {
+        if (currentLevel < 1 || currentLevel > static_cast<int>(levels.size())) {
+            return;
+        }
+
+        Level& level = levels[static_cast<size_t>(currentLevel) - 1];
+
+        if (score >= level.targetScore) {
+            if (currentLevel < static_cast<int>(levels.size())) {
+                currentLevel++;
+                gameState = PLAYING;
+                restart();
+            }
+            else {
+                gameState = GAME_WON;
+            }
         }
     }
 
     void draw() {
         BeginDrawing();
-        ClearBackground(BLACK);
 
         if (gameState == MAIN_MENU) {
             drawMainMenu();
+        }
+        else if (gameState == LEVEL_SELECT) {
+            drawLevelSelect();
         }
         else if (gameState == PLAYING) {
             drawGame();
@@ -789,41 +1345,214 @@ public:
         EndDrawing();
     }
 
+    void drawParticles() {
+        for (const auto& particle : particles) {
+            DrawCircleV(particle.position, particle.size, Fade(particle.color, particle.life));
+        }
+    }
+
     void drawMainMenu() {
-        // Фон меню
-        DrawRectangleGradientV(0, 0, screenWidth, screenHeight, DARKBLUE, BLACK);
-
-        // Название игры
-        DrawText("BubbleBlast", screenWidth / 2 - MeasureText("BubbleBlast", 50) / 2, 150, 50, WHITE);
-
-        // Кнопка начала игры
-        Color startColor = LIGHTGRAY;
-        if (CheckCollisionPointRec(GetMousePosition(), startButton)) {
-            startColor = GREEN;
+        if (menuBackgroundTexture.id != 0) {
+            DrawTexturePro(menuBackgroundTexture,
+                { 0, 0, (float)menuBackgroundTexture.width, (float)menuBackgroundTexture.height },
+                { 0, 0, (float)screenWidth, (float)screenHeight },
+                { 0, 0 }, 0.0f, WHITE);
         }
-        DrawRectangleRec(startButton, startColor);
-        DrawRectangleLinesEx(startButton, 2, DARKGRAY);
-        DrawText("Start Game",
-            startButton.x + startButton.width / 2 - MeasureText("Start Game", 20) / 2,
-            startButton.y + startButton.height / 2 - 10,
-            20, DARKBLUE);
-
-        // Кнопка выхода
-        Color exitColor = LIGHTGRAY;
-        if (CheckCollisionPointRec(GetMousePosition(), exitButton)) {
-            exitColor = RED;
+        else {
+            DrawRectangleGradientV(0, 0, screenWidth, screenHeight, DARKBLUE, BLACK);
         }
-        DrawRectangleRec(exitButton, exitColor);
-        DrawRectangleLinesEx(exitButton, 2, DARKGRAY);
-        DrawText("Exit",
-            exitButton.x + exitButton.width / 2 - MeasureText("Exit", 20) / 2,
-            exitButton.y + exitButton.height / 2 - 10,
-            20, DARKBLUE);
+
+        if (logoTexture.id != 0) {
+            float logoWidth = 300.0f;
+            float logoHeight = 150.0f;
+
+            Rectangle logoRect = {
+                screenWidth / 2.0f - logoWidth / 2.0f,
+                120.0f,
+                logoWidth,
+                logoHeight
+            };
+
+            DrawTexturePro(logoTexture,
+                { 0, 0, (float)logoTexture.width, (float)logoTexture.height },
+                logoRect,
+                { 0, 0 }, 0.0f, WHITE);
+        }
+        else {
+            DrawText("BubbleBlast", screenWidth / 2 - MeasureText("BubbleBlast", 50) / 2, 150, 50, WHITE);
+        }
+
+        Color startTint = WHITE;
+        if (CheckCollisionPointRec(GetMousePosition(), startButtonRect)) {
+            startTint = YELLOW;
+        }
+
+        if (startButtonTexture.id != 0) {
+            DrawTexturePro(startButtonTexture,
+                { 0, 0, (float)startButtonTexture.width, (float)startButtonTexture.height },
+                startButtonRect,
+                { 0, 0 }, 0.0f, startTint);
+        }
+        else {
+            DrawRectangleRec(startButtonRect, LIGHTGRAY);
+            DrawRectangleLinesEx(startButtonRect, 2, DARKGRAY);
+            DrawText("Start Game",
+                startButtonRect.x + startButtonRect.width / 2 - MeasureText("Start Game", 20) / 2,
+                startButtonRect.y + startButtonRect.height / 2 - 10,
+                20, DARKBLUE);
+        }
+
+        Color levelsTint = WHITE;
+        if (CheckCollisionPointRec(GetMousePosition(), levelsButtonRect)) {
+            levelsTint = YELLOW;
+        }
+
+        if (levelsButtonTexture.id != 0) {
+            DrawTexturePro(levelsButtonTexture,
+                { 0, 0, (float)levelsButtonTexture.width, (float)levelsButtonTexture.height },
+                levelsButtonRect,
+                { 0, 0 }, 0.0f, levelsTint);
+        }
+        else {
+            DrawRectangleRec(levelsButtonRect, LIGHTGRAY);
+            DrawRectangleLinesEx(levelsButtonRect, 2, DARKGRAY);
+            DrawText("Levels",
+                levelsButtonRect.x + levelsButtonRect.width / 2 - MeasureText("Levels", 20) / 2,
+                levelsButtonRect.y + levelsButtonRect.height / 2 - 10,
+                20, DARKBLUE);
+        }
+
+        Color exitTint = WHITE;
+        if (CheckCollisionPointRec(GetMousePosition(), exitButtonRect)) {
+            exitTint = YELLOW;
+        }
+
+        if (exitButtonTexture.id != 0) {
+            DrawTexturePro(exitButtonTexture,
+                { 0, 0, (float)exitButtonTexture.width, (float)exitButtonTexture.height },
+                exitButtonRect,
+                { 0, 0 }, 0.0f, exitTint);
+        }
+        else {
+            DrawRectangleRec(exitButtonRect, LIGHTGRAY);
+            DrawRectangleLinesEx(exitButtonRect, 2, DARKGRAY);
+            DrawText("Exit",
+                exitButtonRect.x + exitButtonRect.width / 2 - MeasureText("Exit", 20) / 2,
+                exitButtonRect.y + exitButtonRect.height / 2 - 10,
+                20, DARKBLUE);
+        }
+    }
+
+    void drawLevelSelect() {
+        DrawRectangleGradientV(0, 0, screenWidth, screenHeight, DARKPURPLE, GRAY);
+
+        DrawText("SELECT LEVEL", screenWidth / 2 - MeasureText("SELECT LEVEL", 40) / 2, 30, 40, WHITE);
+
+        float buttonSize = 60.0f;
+        float buttonMargin = 20.0f;
+        Rectangle backButtonRect = {
+            screenWidth - buttonSize - buttonMargin,
+            screenHeight - buttonSize - buttonMargin,
+            buttonSize,
+            buttonSize
+        };
+
+        Color backButtonColor = GRAY;
+        if (CheckCollisionPointRec(GetMousePosition(), backButtonRect)) {
+            backButtonColor = YELLOW;
+            DrawRectangleLinesEx(backButtonRect, 3, WHITE);
+        }
+
+        if (backButtonTexture.id != 0) {
+            DrawTexturePro(backButtonTexture,
+                { 0, 0, (float)backButtonTexture.width, (float)backButtonTexture.height },
+                backButtonRect,
+                { 0, 0 }, 0.0f, WHITE);
+        }
+        else {
+            DrawRectangleRec(backButtonRect, backButtonColor);
+            DrawRectangleLinesEx(backButtonRect, 2, WHITE);
+
+            Vector2 arrowPoint1 = { backButtonRect.x + backButtonRect.width * 0.7f, backButtonRect.y + backButtonRect.height * 0.3f };
+            Vector2 arrowPoint2 = { backButtonRect.x + backButtonRect.width * 0.7f, backButtonRect.y + backButtonRect.height * 0.7f };
+            Vector2 arrowPoint3 = { backButtonRect.x + backButtonRect.width * 0.3f, backButtonRect.y + backButtonRect.height * 0.5f };
+
+            DrawTriangle(arrowPoint1, arrowPoint2, arrowPoint3, BLACK);
+        }
+
+        int levelButtonHeight = 70;
+        int startY = 100;
+
+        for (size_t i = 0; i < levels.size(); i++) {
+            const Level& level = levels[i];
+
+            Color buttonColor;
+            if (i % 5 == 0) buttonColor = BLUE;
+            else if (i % 5 == 1) buttonColor = DARKGREEN;
+            else if (i % 5 == 2) buttonColor = ORANGE;
+            else if (i % 5 == 3) buttonColor = MAGENTA;
+            else buttonColor = RED;
+
+            if (currentLevel == static_cast<int>(i) + 1) {
+                buttonColor = Fade(buttonColor, 0.7f);
+            }
+
+            Rectangle levelRect = { 50.0f, startY + static_cast<float>(i) * (levelButtonHeight + 10.0f),
+                                  screenWidth - 100.0f, static_cast<float>(levelButtonHeight) };
+
+            if (CheckCollisionPointRec(GetMousePosition(), levelRect)) {
+                buttonColor = Fade(buttonColor, 0.8f);
+                DrawRectangleLinesEx(levelRect, 3, YELLOW);
+            }
+
+            DrawRectangleRec(levelRect, buttonColor);
+            DrawRectangleLinesEx(levelRect, 2, WHITE);
+
+            std::string levelText = "Level " + std::to_string(level.levelNumber) + ": " + level.name;
+            DrawText(levelText.c_str(),
+                static_cast<int>(levelRect.x + 20),
+                static_cast<int>(levelRect.y + 10),
+                22, WHITE);
+
+            std::string scoreText = "Target: " + std::to_string(level.targetScore) + " points";
+            DrawText(scoreText.c_str(),
+                static_cast<int>(levelRect.x + 20),
+                static_cast<int>(levelRect.y + 35),
+                16, LIGHTGRAY);
+
+            std::string difficulty = "";
+            if (i == 0) difficulty = "★☆☆☆☆";
+            else if (i == 1) difficulty = "★★☆☆☆";
+            else if (i == 2) difficulty = "★★★☆☆";
+            else if (i == 3) difficulty = "★★★★☆";
+            else difficulty = "★★★★★";
+
+            DrawText(difficulty.c_str(),
+                static_cast<int>(levelRect.x + levelRect.width - 70),
+                static_cast<int>(levelRect.y + 25),
+                20, YELLOW);
+        }
     }
 
     void drawGame() {
-        DrawRectangle(0, screenHeight - 50, screenWidth, 50, DARKGRAY);
-        DrawRectangle(0, 0, screenWidth, 60, DARKGRAY);
+        if (isLevelMode && currentLevel >= 1 && currentLevel <= static_cast<int>(levels.size())) {
+            Level& level = levels[static_cast<size_t>(currentLevel) - 1];
+            DrawRectangle(0, 0, screenWidth, screenHeight, level.backgroundColor);
+        }
+        else if (gameBackgroundTexture.id != 0) {
+            DrawTexturePro(gameBackgroundTexture,
+                { 0, 0, (float)gameBackgroundTexture.width, (float)gameBackgroundTexture.height },
+                { 0, 0, (float)screenWidth, (float)screenHeight },
+                { 0, 0 }, 0.0f, WHITE);
+        }
+        else {
+            ClearBackground(BLACK);
+        }
+
+        drawParticles();
+
+        DrawRectangle(0, screenHeight - 50, screenWidth, 50, Fade(DARKGRAY, 0.7f));
+        DrawRectangle(0, 0, screenWidth, 60, Fade(DARKGRAY, 0.7f));
 
         DrawRectangle(static_cast<int>(gameAreaLeft), static_cast<int>(gameAreaTop),
             static_cast<int>(gameAreaWidth), static_cast<int>(gameAreaHeight), Fade(DARKBLUE, 0.1f));
@@ -838,13 +1567,70 @@ public:
         for (const auto& ball : balls) {
             if (ball.active) {
                 DrawCircleV(ball.position, ball.radius, ball.color);
+
+                if (ball.type == UNIVERSAL && universalIconTexture.id != 0) {
+                    Rectangle dest = { ball.position.x - ball.radius, ball.position.y - ball.radius,
+                                     ball.radius * 2, ball.radius * 2 };
+                    DrawTexturePro(universalIconTexture,
+                        { 0, 0, (float)universalIconTexture.width, (float)universalIconTexture.height },
+                        dest,
+                        { 0, 0 }, 0.0f, WHITE);
+                }
+                else if (ball.type == BOMB && bombIconTexture.id != 0) {
+                    Rectangle dest = { ball.position.x - ball.radius, ball.position.y - ball.radius,
+                                     ball.radius * 2, ball.radius * 2 };
+                    DrawTexturePro(bombIconTexture,
+                        { 0, 0, (float)bombIconTexture.width, (float)bombIconTexture.height },
+                        dest,
+                        { 0, 0 }, 0.0f, WHITE);
+                }
+                else if (ball.type == RAINBOW && rainbowIconTexture.id != 0) {
+                    Rectangle dest = { ball.position.x - ball.radius, ball.position.y - ball.radius,
+                                     ball.radius * 2, ball.radius * 2 };
+                    DrawTexturePro(rainbowIconTexture,
+                        { 0, 0, (float)rainbowIconTexture.width, (float)rainbowIconTexture.height },
+                        dest,
+                        { 0, 0 }, 0.0f, WHITE);
+                }
+
                 DrawCircleLines(static_cast<int>(ball.position.x), static_cast<int>(ball.position.y),
                     static_cast<int>(ball.radius), Fade(WHITE, 0.3f));
+
+                if (ball.type == BOMB) {
+                    DrawCircleLines(static_cast<int>(ball.position.x), static_cast<int>(ball.position.y),
+                        static_cast<float>(ball.bombRadius), Fade(RED, 0.2f));
+                }
             }
         }
 
         if (currentBall) {
             DrawCircleV(currentBall->position, ballRadius, currentBall->color);
+
+            if (currentBall->type == UNIVERSAL && universalIconTexture.id != 0) {
+                Rectangle dest = { currentBall->position.x - ballRadius, currentBall->position.y - ballRadius,
+                                 ballRadius * 2, ballRadius * 2 };
+                DrawTexturePro(universalIconTexture,
+                    { 0, 0, (float)universalIconTexture.width, (float)universalIconTexture.height },
+                    dest,
+                    { 0, 0 }, 0.0f, WHITE);
+            }
+            else if (currentBall->type == BOMB && bombIconTexture.id != 0) {
+                Rectangle dest = { currentBall->position.x - ballRadius, currentBall->position.y - ballRadius,
+                                 ballRadius * 2, ballRadius * 2 };
+                DrawTexturePro(bombIconTexture,
+                    { 0, 0, (float)bombIconTexture.width, (float)bombIconTexture.height },
+                    dest,
+                    { 0, 0 }, 0.0f, WHITE);
+            }
+            else if (currentBall->type == RAINBOW && rainbowIconTexture.id != 0) {
+                Rectangle dest = { currentBall->position.x - ballRadius, currentBall->position.y - ballRadius,
+                                 ballRadius * 2, ballRadius * 2 };
+                DrawTexturePro(rainbowIconTexture,
+                    { 0, 0, (float)rainbowIconTexture.width, (float)rainbowIconTexture.height },
+                    dest,
+                    { 0, 0 }, 0.0f, WHITE);
+            }
+
             DrawCircleLines(static_cast<int>(currentBall->position.x), static_cast<int>(currentBall->position.y),
                 static_cast<int>(ballRadius), YELLOW);
 
@@ -869,10 +1655,41 @@ public:
             }
         }
 
-        DrawText(TextFormat("Score: %d", score), 20, 20, 20, WHITE);
+        if (isLevelMode && currentLevel >= 1 && currentLevel <= static_cast<int>(levels.size())) {
+            Level& level = levels[static_cast<size_t>(currentLevel) - 1];
+
+            DrawText(TextFormat("Level: %d - %s", level.levelNumber, level.name.c_str()), 20, 10, 20, WHITE);
+            DrawText(TextFormat("Score: %d / %d", score, level.targetScore), 20, 35, 20, WHITE);
+        }
+        else {
+            DrawText(TextFormat("Score: %d", score), 20, 10, 20, WHITE);
+            DrawText("Endless Mode", 20, 35, 20, WHITE);
+        }
+
         DrawText(TextFormat("Balls: %zu", balls.size()), screenWidth - 120, 20, 20, WHITE);
 
-        DrawText("LMB - shoot, R - restart", 20, screenHeight - 30, 15, LIGHTGRAY);
+        DrawText("LMB - shoot, R - restart, M - menu", 20, screenHeight - 30, 15, LIGHTGRAY);
+
+        if (isLevelMode && currentLevel >= 1 && currentLevel <= static_cast<int>(levels.size())) {
+            Level& level = levels[static_cast<size_t>(currentLevel) - 1];
+
+            float progressWidth = 300.0f;
+            float progress = static_cast<float>(score) / static_cast<float>(level.targetScore);
+            if (progress > 1.0f) progress = 1.0f;
+
+            DrawRectangle(screenWidth / 2 - 150, screenHeight - 40,
+                static_cast<int>(progressWidth), 20, GRAY);
+            DrawRectangle(screenWidth / 2 - 150, screenHeight - 40,
+                static_cast<int>(progress * progressWidth), 20, GREEN);
+            DrawRectangleLines(screenWidth / 2 - 150, screenHeight - 40,
+                static_cast<int>(progressWidth), 20, WHITE);
+
+            std::string progressText = std::to_string(score) + " / " + std::to_string(level.targetScore);
+            DrawText(progressText.c_str(),
+                screenWidth / 2 - MeasureText(progressText.c_str(), 15) / 2,
+                screenHeight - 38,
+                15, WHITE);
+        }
     }
 
     void drawEndScreen() {
@@ -886,7 +1703,16 @@ public:
         else if (gameState == GAME_WON) {
             DrawText("YOU WIN!", screenWidth / 2 - 80, screenHeight / 2 - 60, 40, GREEN);
             DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 90, screenHeight / 2, 25, WHITE);
-            DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 80, 20, GREEN);
+
+            if (isLevelMode && currentLevel >= static_cast<int>(levels.size())) {
+                DrawText("All levels completed!", screenWidth / 2 - 120, screenHeight / 2 + 40, 25, YELLOW);
+            }
+            else if (isLevelMode) {
+                DrawText(TextFormat("Next level: %d", currentLevel + 1),
+                    screenWidth / 2 - 100, screenHeight / 2 + 40, 25, YELLOW);
+            }
+
+            DrawText("Press R to continue", screenWidth / 2 - 110, screenHeight / 2 + 80, 20, GREEN);
         }
 
         DrawText("Press M for Main Menu", screenWidth / 2 - 120, screenHeight / 2 + 120, 20, SKYBLUE);
@@ -918,27 +1744,39 @@ public:
             }
 
             if (IsKeyPressed(KEY_M)) {
-                if (gameState == GAME_OVER || gameState == GAME_WON) {
+                if (gameState == GAME_OVER || gameState == GAME_WON || gameState == PLAYING) {
                     gameState = MAIN_MENU;
                     restart();
                 }
             }
 
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                if (gameState == PLAYING) {
+                    gameState = MAIN_MENU;
+                    restart();
+                }
+                else if (gameState == LEVEL_SELECT) {
+                    gameState = MAIN_MENU;
+                }
+            }
+
             update();
-                draw();
+            draw();
         }
     }
 
     void restart() {
         balls.clear();
+        particles.clear();
         if (currentBall) {
             delete currentBall;
             currentBall = nullptr;
         }
         score = 0;
-        gameState = PLAYING;
-        createInitialBalls();
-        createNewBall();
+        if (gameState == PLAYING) {
+            createInitialBalls(isLevelMode);
+            createNewBall();
+        }
     }
 };
 
