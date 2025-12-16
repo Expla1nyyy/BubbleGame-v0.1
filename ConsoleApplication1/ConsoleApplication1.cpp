@@ -515,6 +515,30 @@ public:
         else if (gameState == PLAYING) {
             updateGame();
         }
+        else if (gameState == GAME_OVER || gameState == GAME_WON) {
+            updateEndScreen();
+        }
+    }
+
+    void updateEndScreen() {
+        if (IsKeyPressed(KEY_R)) {
+            if (gameState == GAME_OVER || gameState == GAME_WON) {
+                restart();
+                gameState = PLAYING;
+            }
+        }
+
+        if (IsKeyPressed(KEY_M)) {
+            gameState = MAIN_MENU;
+            restart();
+        }
+
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            if (gameState == GAME_OVER || gameState == GAME_WON) {
+                gameState = MAIN_MENU;
+                restart();
+            }
+        }
     }
 
     void updateParticles() {
@@ -1554,10 +1578,11 @@ public:
         DrawRectangle(0, screenHeight - 50, screenWidth, 50, Fade(DARKGRAY, 0.7f));
         DrawRectangle(0, 0, screenWidth, 60, Fade(DARKGRAY, 0.7f));
 
-        DrawRectangle(static_cast<int>(gameAreaLeft), static_cast<int>(gameAreaTop),
-            static_cast<int>(gameAreaWidth), static_cast<int>(gameAreaHeight), Fade(DARKBLUE, 0.1f));
-        DrawRectangleLines(static_cast<int>(gameAreaLeft), static_cast<int>(gameAreaTop),
-            static_cast<int>(gameAreaWidth), static_cast<int>(gameAreaHeight), BLUE);
+        // Убрана синяя рамка игрового поля
+        // DrawRectangle(static_cast<int>(gameAreaLeft), static_cast<int>(gameAreaTop),
+        //     static_cast<int>(gameAreaWidth), static_cast<int>(gameAreaHeight), Fade(DARKBLUE, 0.1f));
+        // DrawRectangleLines(static_cast<int>(gameAreaLeft), static_cast<int>(gameAreaTop),
+        //     static_cast<int>(gameAreaWidth), static_cast<int>(gameAreaHeight), BLUE);
 
         DrawCircleLines(static_cast<int>(newBallPosition.x), static_cast<int>(newBallPosition.y),
             static_cast<int>(ballRadius), Fade(GREEN, 0.3f));
@@ -1663,12 +1688,15 @@ public:
         }
         else {
             DrawText(TextFormat("Score: %d", score), 20, 10, 20, WHITE);
-            DrawText("Endless Mode", 20, 35, 20, WHITE);
+            DrawText("Arcade Mode", 20, 35, 20, WHITE);
         }
 
         DrawText(TextFormat("Balls: %zu", balls.size()), screenWidth - 120, 20, 20, WHITE);
 
-        DrawText("LMB - shoot, R - restart, M - menu", 20, screenHeight - 30, 15, LIGHTGRAY);
+        // Убираем подсказку управления в режиме уровня (оставляем только в аркадном режиме)
+        if (!isLevelMode) {
+            DrawText("LMB - shoot, R - restart, M - menu", 20, screenHeight - 30, 15, LIGHTGRAY);
+        }
 
         if (isLevelMode && currentLevel >= 1 && currentLevel <= static_cast<int>(levels.size())) {
             Level& level = levels[static_cast<size_t>(currentLevel) - 1];
@@ -1697,25 +1725,30 @@ public:
 
         if (gameState == GAME_OVER) {
             DrawText("GAME OVER!", screenWidth / 2 - 100, screenHeight / 2 - 60, 30, RED);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 90, screenHeight / 2 - 10, 25, WHITE);
-            DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 80, 20, GREEN);
+            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 110, screenHeight / 2 - 10, 25, WHITE);
+            DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 30, 20, GREEN);
+            DrawText("Press M for Main Menu", screenWidth / 2 - 120, screenHeight / 2 + 60, 20, SKYBLUE);
         }
         else if (gameState == GAME_WON) {
             DrawText("YOU WIN!", screenWidth / 2 - 80, screenHeight / 2 - 60, 40, GREEN);
-            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 90, screenHeight / 2, 25, WHITE);
+            DrawText(TextFormat("Final Score: %d", score), screenWidth / 2 - 110, screenHeight / 2 - 10, 25, WHITE);
 
             if (isLevelMode && currentLevel >= static_cast<int>(levels.size())) {
-                DrawText("All levels completed!", screenWidth / 2 - 120, screenHeight / 2 + 40, 25, YELLOW);
+                DrawText("All levels completed!", screenWidth / 2 - 120, screenHeight / 2 + 20, 25, YELLOW);
+                DrawText("Press R to restart level", screenWidth / 2 - 120, screenHeight / 2 + 50, 20, GREEN);
+                DrawText("Press M for Main Menu", screenWidth / 2 - 120, screenHeight / 2 + 80, 20, SKYBLUE);
             }
             else if (isLevelMode) {
                 DrawText(TextFormat("Next level: %d", currentLevel + 1),
-                    screenWidth / 2 - 100, screenHeight / 2 + 40, 25, YELLOW);
+                    screenWidth / 2 - 100, screenHeight / 2 + 20, 25, YELLOW);
+                DrawText("Press R to continue", screenWidth / 2 - 110, screenHeight / 2 + 50, 20, GREEN);
+                DrawText("Press M for Main Menu", screenWidth / 2 - 120, screenHeight / 2 + 80, 20, SKYBLUE);
             }
-
-            DrawText("Press R to continue", screenWidth / 2 - 110, screenHeight / 2 + 80, 20, GREEN);
+            else {
+                DrawText("Press R to restart", screenWidth / 2 - 100, screenHeight / 2 + 30, 20, GREEN);
+                DrawText("Press M for Main Menu", screenWidth / 2 - 120, screenHeight / 2 + 60, 20, SKYBLUE);
+            }
         }
-
-        DrawText("Press M for Main Menu", screenWidth / 2 - 120, screenHeight / 2 + 120, 20, SKYBLUE);
     }
 
     void drawMinimalConnections() {
@@ -1740,7 +1773,10 @@ public:
     void run() {
         while (!WindowShouldClose()) {
             if (IsKeyPressed(KEY_R)) {
-                restart();
+                if (gameState == PLAYING) {
+                    restart();
+                }
+                // Обработка R на экране завершения игры вынесена в updateEndScreen()
             }
 
             if (IsKeyPressed(KEY_M)) {
@@ -1758,6 +1794,7 @@ public:
                 else if (gameState == LEVEL_SELECT) {
                     gameState = MAIN_MENU;
                 }
+                // Обработка ESC на экране завершения игры вынесена в updateEndScreen()
             }
 
             update();
@@ -1775,6 +1812,10 @@ public:
         score = 0;
         if (gameState == PLAYING) {
             createInitialBalls(isLevelMode);
+            createNewBall();
+        }
+        else if (gameState == MAIN_MENU) {
+            createInitialBalls(false);
             createNewBall();
         }
     }
